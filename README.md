@@ -202,8 +202,16 @@ DirectInput stays on for other pads. Those hints are set before SDL starts. This
 cannot see a physical controller; the table above is what the code maps, and it still needs
 a pass on real hardware.
 
-F1, both stick clicks, or the touchpad opens the settings menu. Escape closes it. While the
-menu is open the game sees no buttons. F11 toggles fullscreen. Close the window to quit.
+F1, both stick clicks, or the touchpad opens the settings menu. While the menu is open the
+game sees no buttons. F11 toggles fullscreen. Close the window to quit.
+
+The menu has four tabs: **Graphics** (frame rate, resolution, aspect, upscale filter, FPS
+counter), **Controls** (gyro aiming, rumble, buttons, touch controls), **Audio** (volume) and
+**About** (project name and credits). On a controller, the D-pad or left stick moves and changes
+values, L1 and R1 switch tab, Cross (Xbox A) selects, and Circle (Xbox B), Start or the touchpad
+closes it. On a keyboard, the arrow keys move and change values, Tab or PageUp and PageDown switch
+tab, Enter selects, and Escape or F1 closes it. Every setting is the same as before and is saved
+to the same `settings.ini` keys.
 
 ## Environment variables
 
