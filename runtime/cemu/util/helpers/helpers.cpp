@@ -121,7 +121,7 @@ void SetThreadName(const char* name)
 	static SetThreadDescription_t pSetThreadDescription = nullptr;
 	if (!pSetThreadDescription)
 	{
-		// BotWRecomp: MinGW gcc rejects FARPROC -> function pointer.
+		// BotW-Native: MinGW gcc rejects FARPROC -> function pointer.
 		FARPROC raw = GetProcAddress(LoadLibraryW(L"Kernel32.dll"), "SetThreadDescription");
 		static_assert(sizeof(raw) == sizeof(pSetThreadDescription));
 		memcpy(&pSetThreadDescription, &raw, sizeof(raw));

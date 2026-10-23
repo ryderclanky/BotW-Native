@@ -1,4 +1,4 @@
-// BotWRecomp shim: per-game profile values Cemu ships for BotW (accurate MUL on).
+// BotW-Native shim: per-game profile values Cemu ships for BotW (accurate MUL on).
 #pragma once
 #include "config/CemuConfig.h"
 

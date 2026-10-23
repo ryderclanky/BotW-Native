@@ -1,4 +1,4 @@
-# BotWRecomp for iOS (iPhone, arm64). Separate project so the macOS build (../CMakeLists.txt) stays
+# BotW-Native for iOS (iPhone, arm64). Separate project so the macOS build (../CMakeLists.txt) stays
 # untouched; it compiles the same generated/, runtime/ and runtime/cemu sources plus ios/src.
 #
 # Use ios/scripts/build.sh (configures build-ios/<sdk>, builds, signs). By hand:

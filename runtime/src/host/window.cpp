@@ -271,9 +271,9 @@ void create() {
     flags |= latte::using_vulkan() ? SDL_WINDOW_VULKAN : SDL_WINDOW_METAL;
     if (g_headless) flags |= SDL_WINDOW_HIDDEN;  // tests: render into a hidden window, never on screen
 #if defined(_WIN32)
-    const char* title = "BotW Recompiled (Windows)";
+    const char* title = "BotW-Native (Windows)";
 #else
-    const char* title = "BotW Recompiled";
+    const char* title = "BotW-Native";
 #endif
     g_win = SDL_CreateWindow(title, 1280, 720, flags);
     if (!g_win) {

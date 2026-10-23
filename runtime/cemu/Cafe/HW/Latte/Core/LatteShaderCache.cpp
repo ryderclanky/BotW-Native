@@ -32,7 +32,7 @@
 #include "Cafe/HW/Latte/Common/ShaderSerializer.h"
 #include "util/helpers/Serializer.h"
 
-// BotWRecomp: boot sound player removed (audio/IAudioAPI.h, BootSoundReader.h)
+// BotW-Native: boot sound player removed (audio/IAudioAPI.h, BootSoundReader.h)
 #include <thread>
 
 #if BOOST_OS_WINDOWS
@@ -162,7 +162,7 @@ bool LoadTGAFile(const std::vector<uint8>& buffer, TGAFILE *tgaFile)
 	return true;
 }
 
-// BotWRecomp: Cemu plays the title's boot sound while loading the shader cache; not here.
+// BotW-Native: Cemu plays the title's boot sound while loading the shader cache; not here.
 class BootSoundPlayer
 {
   public:
@@ -331,7 +331,7 @@ void LatteShaderCache_Load()
 
 		std::string texPath = fmt::format("{}/meta/{}", CafeSystem::GetMlcStoragePath(CafeSystem::GetForegroundTitleId()), fileName);
 		sint32 status;
-		// BotWRecomp: no boot background texture (Cemu reads meta/bootTvTex.tga through its VFS)
+		// BotW-Native: no boot background texture (Cemu reads meta/bootTvTex.tga through its VFS)
 		(void)texPath;
 
 	};
@@ -425,7 +425,7 @@ void LatteShaderCache_ShowProgress(const std::function <bool(void)>& loadUpdateF
 	auto lastFrameUpdate = tick_cached();
 
 #ifdef BOTWRECOMP
-	// BotWRecomp: no ImGui fonts are loaded; load the cache without the progress screen
+	// BotW-Native: no ImGui fonts are loaded; load the cache without the progress screen
 	while (!Latte_GetStopSignal() && loadUpdateFunc()) {}
 	return;
 #endif

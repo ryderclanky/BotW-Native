@@ -270,7 +270,7 @@ public:
 
 	void SetShouldMaximizeConcurrentCompilation(bool shouldMaximizeConcurrentCompilation)
 	{
-#if !TARGET_OS_IOS  // BotWRecomp: macOS-only MTLDevice property (iOS devices throw "unrecognized selector")
+#if !TARGET_OS_IOS  // BotW-Native: macOS-only MTLDevice property (iOS devices throw "unrecognized selector")
 	    if (m_supportsMetal3)
 	        m_device->setShouldMaximizeConcurrentCompilation(shouldMaximizeConcurrentCompilation);
 #endif

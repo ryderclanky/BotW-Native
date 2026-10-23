@@ -20,7 +20,7 @@ int botw_main(int argc, char** argv);
 
 namespace {
 NSString* const kReadme =
-    @"BotWRecomp needs the Breath of the Wild (Wii U, v1.5.0) game files.\n\n"
+    @"BotW-Native needs the Breath of the Wild (Wii U, v1.5.0) game files.\n\n"
      "Copy the folder that contains code/, content/ and meta/ into this app's Documents\n"
      "(Finder > iPhone > Files > BotW, drag the folder in) and name it \"game\":\n\n"
      "    Documents/game/code/U-King.rpx\n"

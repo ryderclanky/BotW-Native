@@ -1,4 +1,4 @@
-# BotW Recompiled for Windows
+# BotW-Native
 
 Breath of the Wild (Wii U) boots and plays on **Windows 10 and Windows 11** with Vulkan. The
 PowerPC game code is statically recompiled to C++ and runs on a Cafe OS runtime. Cemu's Latte
@@ -92,8 +92,8 @@ Startup commits the Cafe windows the game uses (code, heaps, MEM2, MEM1, foregro
 1.4 GB of commit charge, not resident RAM. A pagefile that is too small can fail a later
 commit. The log line is `guest commit charge 1451 MB (not resident)`.
 
-The window title is **BotW Recompiled (Windows)**. The first log line is
-`BotW Recompiled for Windows (Vulkan)`.
+The window title is **BotW-Native (Windows)**. The first log line is
+`BotW-Native for Windows (Vulkan)`.
 
 Useful flags: `--fps 30` for the game's original pace (60 is the default), `--scale 1` for
 1280×720, `--display fit|stretch|fill`, `--no-gyro`, `--mute`. `--renderer vulkan` is the

@@ -1,7 +1,7 @@
 #pragma once
 
 // From Cemu a53cf0e src/util/DXGIWrapper/DXGIWrapper.h.
-// BotWRecomp: that header uses WRL ComPtr (wrl/client.h), which MinGW UCRT64 does not ship.
+// BotW-Native: that header uses WRL ComPtr (wrl/client.h), which MinGW UCRT64 does not ship.
 // The query is the same: match the Vulkan device LUID to an IDXGIAdapter3 and read local VRAM.
 
 #undef GetHwnd

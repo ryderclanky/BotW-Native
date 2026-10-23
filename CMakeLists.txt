@@ -289,7 +289,7 @@ if(APPLE)
     "-framework CoreMedia" "-framework CoreVideo")
 endif()
 
-message(STATUS "BotWRecomp backends: Metal=${BOTW_ENABLE_METAL} Vulkan=${BOTW_ENABLE_VULKAN}")
+message(STATUS "BotW-Native backends: Metal=${BOTW_ENABLE_METAL} Vulkan=${BOTW_ENABLE_VULKAN}")
 
 # Native Metal GPU path (docs/native-renderer.md): option BOTW_NATIVE_GPU, default OFF (gpu_native.cmake).
 include(${CMAKE_SOURCE_DIR}/runtime/src/gpu_native/gpu_native.cmake OPTIONAL)

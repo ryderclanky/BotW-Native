@@ -189,7 +189,7 @@ public:
 	static std::vector<DeviceInfo> GetDevices();
 	VulkanRenderer();
 	virtual ~VulkanRenderer();
-	// BotWRecomp: unique_ptr clears the global before the destructor runs. Member
+	// BotW-Native: unique_ptr clears the global before the destructor runs. Member
 	// cleanup still calls GetInstance(), so the delete path publishes `this` and
 	// drops it only after the destructor has finished.
 	static void operator delete(void* p);

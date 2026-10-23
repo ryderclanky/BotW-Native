@@ -108,7 +108,7 @@ namespace GX2
 	void GX2DrawIndexedImmediateEx(GX2PrimitiveMode2 primitiveMode, uint32 count, GX2IndexType indexType, void* indexData, uint32 baseVertex, uint32 numInstances)
 	{
 		uint32* indexDataU32 = (uint32*)indexData;
-		uint32 numIndexU32s = 0; // BotWRecomp: initialized (Cemu leaves it unset for unknown index types)
+		uint32 numIndexU32s = 0; // BotW-Native: initialized (Cemu leaves it unset for unknown index types)
 		bool use32BitIndices = false;
 		if (indexType == GX2IndexType::U16_BE || indexType == GX2IndexType::U16_LE)
 		{

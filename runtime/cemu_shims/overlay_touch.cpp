@@ -1,4 +1,4 @@
-// BotWRecomp: draws the on-screen touch controls (runtime/src/host/touch.cpp) into the overlay's ImGui frame
+// BotW-Native: draws the on-screen touch controls (runtime/src/host/touch.cpp) into the overlay's ImGui frame
 // (GPU thread, called from LatteOverlay_render while the settings menu is closed). Background draw list, so
 // ImGui windows (FPS counter, software keyboard) stay on top. Labels are stroked vector glyphs: the built-in
 // ImGui font is a 13 px bitmap and would be blurry at thumb size.

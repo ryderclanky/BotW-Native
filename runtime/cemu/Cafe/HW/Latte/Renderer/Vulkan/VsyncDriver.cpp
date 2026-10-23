@@ -33,7 +33,7 @@ public:
 		if (!pfnD3DKMTOpenAdapterFromHdc)
 		{
 			HMODULE hModuleGDI = LoadLibraryA("gdi32.dll");
-			// BotWRecomp: MinGW gcc rejects assigning FARPROC to void*. Copy the pointer bits.
+			// BotW-Native: MinGW gcc rejects assigning FARPROC to void*. Copy the pointer bits.
 			FARPROC openAdapter = GetProcAddress(hModuleGDI, "D3DKMTOpenAdapterFromHdc");
 			FARPROC waitBlank = GetProcAddress(hModuleGDI, "D3DKMTWaitForVerticalBlankEvent");
 			memcpy(&pfnD3DKMTOpenAdapterFromHdc, &openAdapter, sizeof(openAdapter));
@@ -206,7 +206,7 @@ void VsyncDriver_notifyWindowPosChanged()
 
 #else
 
-// BotWRecomp: Cemu's host-vsync driver is D3DKMT-only. On other platforms a timer at the Wii U's
+// BotW-Native: Cemu's host-vsync driver is D3DKMT-only. On other platforms a timer at the Wii U's
 // 59.94 Hz rate feeds the same callback, so VSync::SYNC_AND_LIMIT still retires flips.
 namespace
 {

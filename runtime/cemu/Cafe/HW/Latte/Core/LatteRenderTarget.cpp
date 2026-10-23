@@ -850,7 +850,7 @@ void LatteRenderTarget_getScreenImageArea(sint32* x, sint32* y, sint32* width, s
 	}
 	else if (GetConfig().fullscreen_scaling == kFillCrop)
 	{
-		// BotWRecomp: cover the whole window with intact aspect ratio, cropping what does not fit
+		// BotW-Native: cover the whole window with intact aspect ratio, cropping what does not fit
 		scaledOutputX = w;
 		scaledOutputY = _currentOutputImageHeight * w / std::max(_currentOutputImageWidth, 1);
 		if (scaledOutputY < h)
@@ -875,13 +875,13 @@ void LatteRenderTarget_getScreenImageArea(sint32* x, sint32* y, sint32* width, s
 		*fullHeight = h;
 }
 
-void botw_capture_hook(LatteTextureView* textureView, bool isPadView);  // BotWRecomp: --capture
+void botw_capture_hook(LatteTextureView* textureView, bool isPadView);  // BotW-Native: --capture
 
 void LatteRenderTarget_copyToBackbuffer(LatteTextureView* textureView, bool isPadView)
 {
 	// make sure texture is updated to latest data in cache
 	LatteTexture_UpdateDataToLatest(textureView->baseTexture);
-	botw_capture_hook(textureView, isPadView);  // BotWRecomp
+	botw_capture_hook(textureView, isPadView);  // BotW-Native
 	// mark source texture as still in use
 	LatteTC_MarkTextureStillInUse(textureView->baseTexture);
 

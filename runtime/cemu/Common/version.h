@@ -1,6 +1,6 @@
 #ifndef EMULATOR_NAME
 
-// BotWRecomp: Vulkan reports this fork, not upstream Cemu. Cemu remains the vendored GPU layer.
+// BotW-Native: Vulkan reports this fork, not upstream Cemu. Cemu remains the vendored GPU layer.
 #define EMULATOR_NAME					"BotWRecomp"
 
 #define EMULATOR_VERSION_SUFFIX			""

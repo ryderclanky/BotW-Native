@@ -1,4 +1,4 @@
-// BotWRecomp: implementations of the Cemu subsystem shims used by the vendored GPU code.
+// BotW-Native: implementations of the Cemu subsystem shims used by the vendored GPU code.
 #include <time.h>
 
 #include "Cafe/CafeSystem.h"

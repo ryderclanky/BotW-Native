@@ -309,16 +309,16 @@ void LatteBufferCache_Sync(uint32 maxVtxIndex, uint32 baseInstance, uint32 insta
 	if (vertexShader && vertexShader->uniformMode == LATTE_DECOMPILER_UNIFORM_MODE_FULL_CBANK)
 	{
 		if (LatteBufferCache_syncGPUUniformBuffers(vertexShader, mmSQ_VTX_UNIFORM_BLOCK_START, LatteConst::ShaderType::Vertex, vsUniformBufferDirtyMask))
-			stageUniformModifiedMask |= (1<<static_cast<int>(LatteConst::ShaderType::Vertex) /* BotWRecomp: was VulkanRendererConst */);
+			stageUniformModifiedMask |= (1<<static_cast<int>(LatteConst::ShaderType::Vertex) /* BotW-Native: was VulkanRendererConst */);
 	}
 	if (pixelShader && pixelShader->uniformMode == LATTE_DECOMPILER_UNIFORM_MODE_FULL_CBANK)
 	{
 		if (LatteBufferCache_syncGPUUniformBuffers(pixelShader, mmSQ_PS_UNIFORM_BLOCK_START, LatteConst::ShaderType::Pixel, psUniformBufferDirtyMask))
-			stageUniformModifiedMask |= (1<<static_cast<int>(LatteConst::ShaderType::Pixel) /* BotWRecomp: was VulkanRendererConst */); // todo - move this enum to Latte?
+			stageUniformModifiedMask |= (1<<static_cast<int>(LatteConst::ShaderType::Pixel) /* BotW-Native: was VulkanRendererConst */); // todo - move this enum to Latte?
 	}
 	if (geometryShader && geometryShader->uniformMode == LATTE_DECOMPILER_UNIFORM_MODE_FULL_CBANK)
 	{
 		if ( LatteBufferCache_syncGPUUniformBuffers(geometryShader, mmSQ_GS_UNIFORM_BLOCK_START, LatteConst::ShaderType::Geometry, gsUniformBufferDirtyMask) )
-			stageUniformModifiedMask |= (1<<static_cast<int>(LatteConst::ShaderType::Geometry) /* BotWRecomp: was VulkanRendererConst */);
+			stageUniformModifiedMask |= (1<<static_cast<int>(LatteConst::ShaderType::Geometry) /* BotW-Native: was VulkanRendererConst */);
 	}
 }

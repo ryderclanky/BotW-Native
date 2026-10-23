@@ -1,4 +1,4 @@
-// BotWRecomp shim: time helpers used by the GPU code.
+// BotW-Native shim: time helpers used by the GPU code.
 #pragma once
 #include "Cafe/HW/Espresso/Const.h"
 namespace coreinit {

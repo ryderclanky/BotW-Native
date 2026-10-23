@@ -1,4 +1,4 @@
-// BotWRecomp shim: TCL owns the GPU ring buffer in Cemu. Here the ring is a host queue filled by
+// BotW-Native shim: TCL owns the GPU ring buffer in Cemu. Here the ring is a host queue filled by
 // latte::submit() (runtime/cemu_shims/latte_glue.cpp) and drained by Cemu's command processor.
 #pragma once
 namespace TCL {

@@ -1,4 +1,4 @@
-// BotWRecomp entry: map guest memory, load U-King.rpx, initialise Cafe OS state and run the game's
+// BotW-Native entry: map guest memory, load U-King.rpx, initialise Cafe OS state and run the game's
 // entry point on its own host thread. The host main thread stays free for the window/event loop.
 #include <stdio.h>
 #include <stdlib.h>
@@ -134,11 +134,11 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(g_user_root, ec);
     log_set_file((g_user_root + "/runtime.log").c_str());
 #if defined(_WIN32)
-    LOG("BotW Recompiled for Windows (Vulkan)");
+    LOG("BotW-Native for Windows (Vulkan)");
 #elif defined(__APPLE__)
-    LOG("BotW Recompiled (Metal)");
+    LOG("BotW-Native (Metal)");
 #else
-    LOG("BotW Recompiled (Vulkan)");
+    LOG("BotW-Native (Vulkan)");
 #endif
     settings::load(g_user_root + "/settings.ini");  // in-game menu settings; the flags below override them
     Settings opt = settings::get();

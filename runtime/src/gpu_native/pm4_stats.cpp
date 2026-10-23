@@ -486,7 +486,7 @@ void write_report(Stats& s) {
     if (!f) return;
     const Frame& t = s.total;
     uint64_t draws = t.draws_top + t.draws_dl;
-    fprintf(f, "BotWRecomp PM4 stream statistics (--gpu-stats), %llu frames (%llu with draws), %llu submissions\n",
+    fprintf(f, "BotW-Native PM4 stream statistics (--gpu-stats), %llu frames (%llu with draws), %llu submissions\n",
             (unsigned long long)s.frame, (unsigned long long)s.frames_with_draws, (unsigned long long)s.submissions);
     fprintf(f, "draws %llu: top-level %llu (%.1f%%), inside display lists %llu (%.1f%%); max per frame %llu\n",
             (unsigned long long)draws, (unsigned long long)t.draws_top, draws ? 100.0 * t.draws_top / draws : 0,

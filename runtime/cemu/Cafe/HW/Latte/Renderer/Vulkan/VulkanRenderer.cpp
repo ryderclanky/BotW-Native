@@ -857,13 +857,13 @@ static VulkanRenderer* s_instanceDuringDestroy = nullptr;
 
 VulkanRenderer::~VulkanRenderer()
 {
-	// BotWRecomp: g_renderer is already null here. Member destructors call GetInstance().
+	// BotW-Native: g_renderer is already null here. Member destructors call GetInstance().
 	s_instanceDuringDestroy = this;
 	SubmitCommandBuffer();
 	WaitDeviceIdle();
 	WaitCommandBufferFinished(GetCurrentCommandBufferId());
 	// shut down pipeline save thread
-	// BotWRecomp: the save thread starts in Initialize(). A device that never got that far
+	// BotW-Native: the save thread starts in Initialize(). A device that never got that far
 	// must not throw from std::thread::join during destruction.
 	m_destructionRequested = true;
 	m_pipeline_cache_semaphore.notify();
