@@ -73,7 +73,10 @@ void load(const std::string& path) {
                 else if (!strcmp(line, "filter")) g_s.filter = atoi(v);
                 else if (!strcmp(line, "gyro")) g_s.gyro = atoi(v) != 0;
                 else if (!strcmp(line, "rumble")) g_s.rumble = atoi(v) != 0;
-                else if (!strcmp(line, "layout")) g_s.layout = atoi(v);
+                else if (!strcmp(line, "layout")) {
+                    int layout = atoi(v);
+                    g_s.layout = layout < 0 ? -1 : layout > 0 ? 1 : 0;
+                }
                 else if (!strcmp(line, "show_fps")) g_s.show_fps = atoi(v) != 0;
                 else if (!strcmp(line, "volume")) g_s.volume = atoi(v);
                 else if (!strcmp(line, "touch")) g_s.touch = atoi(v);
