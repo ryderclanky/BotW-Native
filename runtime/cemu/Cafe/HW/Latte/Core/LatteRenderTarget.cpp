@@ -17,6 +17,7 @@
 #include "Cafe/OS/libs/erreula/erreula.h"
 #include "input/InputManager.h"
 #include "Cafe/OS/libs/swkbd/swkbd.h"
+#include "title_diag.h"
 
 uint32 prevScissorX = 0;
 uint32 prevScissorY = 0;
@@ -369,7 +370,10 @@ uint8 LatteMRT::GetActiveColorBufferMask(const LatteDecompilerShader* pixelShade
 
 		if ((colorBufferWidth < (sint32)scissorAccessWidth) || (colorBufferHeight < (sint32)scissorAccessHeight))
 		{
-            // log this?
+			// BotWRecomp: Cemu drops the target instead of clipping. A subtitle buffer smaller than a
+			// leftover full-screen scissor never reaches Vulkan. Keep the heuristic; log the drop.
+			title_diag_event(TITLE_DIAG_SCISSOR, colorBufferWidth, colorBufferHeight, scissorAccessWidth, scissorAccessHeight,
+				(uint32)GetColorBufferFormat(i, lcr), 0);
 			colorBufferMask &= ~(1<<i);
 		}
 	}

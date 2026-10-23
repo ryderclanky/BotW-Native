@@ -147,6 +147,80 @@ uint32_t g_indirect = 0, g_indirect_words = 0;
 uint32_t g_clears = 0, g_clear_w = 0, g_clear_h = 0;
 uint32_t g_scans = 0, g_scan_w = 0, g_scan_h = 0, g_scan_fmt = 0, g_scan_addr = 0;
 uint32_t g_scan_max_w = 0, g_scan_max_h = 0;
+uint32_t g_prim_tri = 0, g_prim_quad = 0, g_prim_rect = 0, g_prim_other = 0;
+uint32_t g_depth_on = 0, g_depth_off = 0, g_blend_on = 0;
+uint32_t g_small_depth = 0, g_small_nodepth = 0, g_small_after = 0;
+uint32_t g_after_cur = 0, g_after_total = 0;
+int g_after_phase = 0;
+
+constexpr int kKindMax = 18;
+constexpr int kKindCap = 12;
+uint32_t g_kind_count[kKindMax] = {};
+int g_kind_logged[kKindMax] = {};
+struct EvKey {
+    uint32_t a, b, c, d, e, f;
+};
+EvKey g_ev[kKindMax][kKindCap] = {};
+
+void log_cutscene_event(int kind, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e, uint32_t f) {
+    switch (kind) {
+        case TITLE_DIAG_SCISSOR:
+            LOG("[cutscene] scissor drop color %ux%u smaller than scissor %ux%u fmt %04x", a, b, c, d, e);
+            break;
+        case TITLE_DIAG_COPY_RATIO:
+            LOG("[cutscene] copy skipped, scale ratio srcEff %ux%u fmt %04x dstEff %ux%u fmt %04x", a, b, e, c, d, f);
+            break;
+        case TITLE_DIAG_COPY_BPP:
+            LOG("[cutscene] copy skipped, bpp mismatch srcEff %ux%u fmt %04x dstEff %ux%u fmt %04x", a, b, e, c, d, f);
+            break;
+        case TITLE_DIAG_PIPE_FAIL:
+            LOG("[cutscene] pipeline fail vk %d prim %02x blendC %02x/%02x blendA %02x/%02x", (int)a, b, c, d, e, f);
+            break;
+        case TITLE_DIAG_SKIP_SHADER:
+            LOG("[cutscene] skip shader error prim %02x", a);
+            break;
+        case TITLE_DIAG_SKIP_RT:
+            LOG("[cutscene] skip invalid rendertarget prim %02x", a);
+            break;
+        case TITLE_DIAG_SKIP_ATTACH:
+            LOG("[cutscene] skip no color or depth attachment prim %02x", a);
+            break;
+        case TITLE_DIAG_SKIP_RAST:
+            LOG("[cutscene] skip rasterizer kill prim %02x", a);
+            break;
+        case TITLE_DIAG_SKIP_PIPE:
+            LOG("[cutscene] skip null pipeline prim %02x", a);
+            break;
+        case TITLE_DIAG_TEX_DIM:
+            LOG("[cutscene] null texture shader %08x%08x expected dim %u bound dim %u fmt %04x", a, b, c, d, e);
+            break;
+        case TITLE_DIAG_RES_CLEAR:
+            LOG("[cutscene] resolution overwrite cleared fmt %04x %ux%u tile %u -> %ux%u", a, b, c, d, e, f);
+            break;
+        case TITLE_DIAG_RES_CLEAR_FONT:
+            LOG("[cutscene] resolution overwrite cleared font/BC fmt %04x %ux%u tile %u -> %ux%u", a, b, c, d, e, f);
+            break;
+        case TITLE_DIAG_BLEND_BOTH:
+            LOG("[cutscene] blend factor 0x%02x on %s emulated (0x0B src=SRC_ALPHA dest=ONE_MINUS_SRC_ALPHA, 0x0C swapped)",
+                a, b ? "src" : "dst");
+            break;
+        case TITLE_DIAG_BLEND_BAD:
+            LOG("[cutscene] blend factor 0x%02x is outside the GX2 table", a);
+            break;
+        case TITLE_DIAG_DEPTH_OFF:
+            LOG("[cutscene] depth test forced off, no depth attachment, prim %02x z %u stencil %u", a, b, c);
+            break;
+        case TITLE_DIAG_RECT:
+            LOG("[cutscene] rect primitive pipeline, nv_fill_rectangle %u", b);
+            break;
+        case TITLE_DIAG_VIEWPORT:
+            LOG("[cutscene] viewport depth outside 0..1 xy %u,%u size %ux%u near %08x far %08x", a, b, c, d, e, f);
+            break;
+        default:
+            LOG("[cutscene] event %d %u %u %u %u %u %u", kind, a, b, c, d, e, f);
+            break;
+    }
+}
 
 std::atomic<uint32_t> g_ax_playing{0}, g_ax_ppc{0}, g_ax_dsp{0}, g_ax_mask{0};
 std::atomic<uint32_t> g_ax_mix{0}, g_ax_lr{0}, g_ax_other{0}, g_ax_flags{0}, g_ax_frames{0};
@@ -175,6 +249,7 @@ void note_max_area(uint32_t& mw, uint32_t& mh, uint32_t w, uint32_t h) {
 
 extern "C" void title_diag_draw(uint32_t color_base, uint32_t color_size) {
     if (!diag_on()) return;
+    if (g_after_phase) g_after_cur++;
     uint32_t base = color_base & 0xFFFFFF00u;
     uint32_t w = 0, h = 0;
     decode_color_size(color_size, w, h);
@@ -191,10 +266,53 @@ extern "C" void title_diag_draw(uint32_t color_base, uint32_t color_size) {
     g_rt[g_rt_n++] = {base, w, h, 1};
 }
 
+extern "C" void title_diag_draw_state(uint32_t prim, int depth_on, uint32_t blend_mask, uint32_t count) {
+    if (!diag_on()) return;
+    if (prim == 0x4) g_prim_tri++;
+    else if (prim == 0x13) g_prim_quad++;
+    else if (prim == 0x11) g_prim_rect++;
+    else g_prim_other++;
+    if (depth_on) g_depth_on++;
+    else g_depth_off++;
+    if (blend_mask) g_blend_on++;
+    if (count <= 6) {
+        if (depth_on) g_small_depth++;
+        else g_small_nodepth++;
+        if (g_after_phase) g_small_after++;
+    }
+}
+
 extern "C" void title_diag_draw_skip(int why) {
     if (!diag_on()) return;
     if (why == 1) g_skip_index++;
     else if (why == 2) g_skip_compute++;
+}
+
+extern "C" void title_diag_event(int kind, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e, uint32_t f) {
+    if (kind <= 0 || kind >= kKindMax) return;
+    if (diag_on()) g_kind_count[kind]++;
+    const int n = g_kind_logged[kind];
+    const int stored = n > kKindCap ? kKindCap : n;
+    for (int i = 0; i < stored; i++) {
+        const EvKey& k = g_ev[kind][i];
+        if (k.a == a && k.b == b && k.c == c && k.d == d && k.e == e && k.f == f) return;
+    }
+    if (n >= kKindCap) {
+        if (n == kKindCap) {
+            g_kind_logged[kind] = kKindCap + 1;
+            LOG("[cutscene] kind %d further unique lines suppressed (BOTW_DIAG=1 still counts them)", kind);
+        }
+        return;
+    }
+    g_ev[kind][g_kind_logged[kind]++] = {a, b, c, d, e, f};
+    log_cutscene_event(kind, a, b, c, d, e, f);
+}
+
+extern "C" void title_diag_swap(void) {
+    if (!diag_on()) return;
+    g_after_total += g_after_cur;
+    g_after_cur = 0;
+    g_after_phase = 0;
 }
 
 extern "C" void title_diag_indirect(uint32_t dwords) {
@@ -211,6 +329,9 @@ extern "C" void title_diag_scanout(uint32_t addr, uint32_t width, uint32_t heigh
     g_scan_fmt = format;
     g_scan_addr = addr;
     note_max_area(g_scan_max_w, g_scan_max_h, width, height);
+    g_after_total += g_after_cur;
+    g_after_cur = 0;
+    g_after_phase = 1;
 }
 
 extern "C" void title_diag_clear(uint32_t mask, uint32_t width, uint32_t height) {
@@ -290,6 +411,23 @@ extern "C" void title_diag_log() {
     g_clears = g_clear_w = g_clear_h = 0;
     g_scans = g_scan_w = g_scan_h = g_scan_fmt = g_scan_addr = g_scan_max_w = g_scan_max_h = 0;
     for (auto& s : g_rt) s = {};
+
+    LOG("[title] prim tri %u quad %u rect %u other %u | depth on %u off %u blend %u | small depth %u nodepth %u "
+        "afterScan %u smallAfter %u | scissor %u copy %u/%u pipe %u skip sh %u rt %u att %u rast %u null %u | "
+        "texDim %u resClear %u fontClear %u blendBoth %u depthOff %u viewport %u rectPipe %u",
+        g_prim_tri, g_prim_quad, g_prim_rect, g_prim_other, g_depth_on, g_depth_off, g_blend_on, g_small_depth,
+        g_small_nodepth, g_after_total + g_after_cur, g_small_after, g_kind_count[TITLE_DIAG_SCISSOR],
+        g_kind_count[TITLE_DIAG_COPY_RATIO], g_kind_count[TITLE_DIAG_COPY_BPP], g_kind_count[TITLE_DIAG_PIPE_FAIL],
+        g_kind_count[TITLE_DIAG_SKIP_SHADER], g_kind_count[TITLE_DIAG_SKIP_RT], g_kind_count[TITLE_DIAG_SKIP_ATTACH],
+        g_kind_count[TITLE_DIAG_SKIP_RAST], g_kind_count[TITLE_DIAG_SKIP_PIPE], g_kind_count[TITLE_DIAG_TEX_DIM],
+        g_kind_count[TITLE_DIAG_RES_CLEAR], g_kind_count[TITLE_DIAG_RES_CLEAR_FONT],
+        g_kind_count[TITLE_DIAG_BLEND_BOTH], g_kind_count[TITLE_DIAG_DEPTH_OFF], g_kind_count[TITLE_DIAG_VIEWPORT],
+        g_kind_count[TITLE_DIAG_RECT]);
+    g_prim_tri = g_prim_quad = g_prim_rect = g_prim_other = 0;
+    g_depth_on = g_depth_off = g_blend_on = 0;
+    g_small_depth = g_small_nodepth = g_small_after = 0;
+    g_after_cur = g_after_total = 0;
+    for (int i = 0; i < kKindMax; i++) g_kind_count[i] = 0;
 
     uint32_t frames = g_ax_frames.exchange(0, std::memory_order_relaxed);
     uint32_t flags = g_ax_flags.load(std::memory_order_relaxed);

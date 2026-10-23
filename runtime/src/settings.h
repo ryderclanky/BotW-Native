@@ -16,7 +16,7 @@ struct Settings {
     int filter = 1;        // output scaling: 0 bilinear, 1 bicubic, 2 hermite, 3 nearest
     bool gyro = true;      // controller gyro -> GamePad motion
     bool rumble = true;
-    int layout = 0;        // 0 Nintendo positions (A = right face button), 1 labels (A = bottom face button)
+    int layout = -1;       // -1 auto (per controller), 0 Nintendo positions (A = right), 1 Xbox/PS labels (A = bottom)
     bool show_fps = false;
     int volume = 100;      // percent
 #if TARGET_OS_IOS

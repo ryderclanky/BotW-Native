@@ -10,6 +10,7 @@
 #include "util/helpers/Serializer.h"
 #include "Cafe/HW/Latte/Common/RegisterSerializer.h"
 #include "HW/Latte/Renderer/RendererCore.h"
+#include "title_diag.h"
 
 RendererShaderVk* rectsEmulationGS_generate(LatteDecompilerShader* vertexShader, const LatteContextRegister& latteRegister)
 {
@@ -214,8 +215,10 @@ static VkBlendFactor GetVkBlendFactor(Latte::LATTE_CB_BLENDN_CONTROL::E_BLENDFAC
 		/* 0x08 */ VK_BLEND_FACTOR_DST_COLOR,
 		/* 0x09 */ VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR,
 		/* 0x0A */ VK_BLEND_FACTOR_SRC_ALPHA_SATURATE,
-		/* 0x0B */ VK_BLEND_FACTOR_MAX_ENUM, // todo
-		/* 0x0C */ VK_BLEND_FACTOR_MAX_ENUM, // todo
+		// 0x0B/0x0C are BOTH_SRC_ALPHA / BOTH_INV_SRC_ALPHA. InitBlendState maps them.
+		// These entries are the source half, so a missed call cannot pass MAX_ENUM to Vulkan.
+		/* 0x0B */ VK_BLEND_FACTOR_SRC_ALPHA,
+		/* 0x0C */ VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
 		/* 0x0D */ VK_BLEND_FACTOR_CONSTANT_COLOR,
 		/* 0x0E */ VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR,
 		/* 0x0F */ VK_BLEND_FACTOR_SRC1_COLOR,
@@ -225,8 +228,34 @@ static VkBlendFactor GetVkBlendFactor(Latte::LATTE_CB_BLENDN_CONTROL::E_BLENDFAC
 		/* 0x13 */ VK_BLEND_FACTOR_CONSTANT_ALPHA,
 		/* 0x14 */ VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA
 	};
-	cemu_assert_debug((uint32)factor < std::size(factors));
+	if ((uint32)factor >= std::size(factors))
+	{
+		// BotWRecomp: an out-of-range factor used to index off this table.
+		title_diag_event(TITLE_DIAG_BLEND_BAD, (uint32)factor, 0, 0, 0, 0, 0);
+		return VK_BLEND_FACTOR_ZERO;
+	}
 	return factors[(uint32)factor];
+}
+
+// GX2/D3D9 BOTH_* factors name a (src, dest) pair and, on the source slot, replace dest.
+// 0x0B: src = SRC_ALPHA, dest = ONE_MINUS_SRC_ALPHA
+// 0x0C: src = ONE_MINUS_SRC_ALPHA, dest = SRC_ALPHA
+static VkBlendFactor MapVkBlendFactor(Latte::LATTE_CB_BLENDN_CONTROL::E_BLENDFACTOR factor, bool isSource, bool& overrideDest, VkBlendFactor& forcedDest)
+{
+	using E = Latte::LATTE_CB_BLENDN_CONTROL::E_BLENDFACTOR;
+	if (factor == E::BLEND_BOTH_SRC_ALPHA || factor == E::BLEND_BOTH_INV_SRC_ALPHA)
+	{
+		const bool inv = factor == E::BLEND_BOTH_INV_SRC_ALPHA;
+		title_diag_event(TITLE_DIAG_BLEND_BOTH, (uint32)factor, isSource ? 1u : 0u, 0, 0, 0, 0);
+		if (isSource)
+		{
+			overrideDest = true;
+			forcedDest = inv ? VK_BLEND_FACTOR_SRC_ALPHA : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+			return inv ? VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : VK_BLEND_FACTOR_SRC_ALPHA;
+		}
+		return inv ? VK_BLEND_FACTOR_SRC_ALPHA : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+	}
+	return GetVkBlendFactor(factor);
 }
 
 bool PipelineCompiler::ConsumesBlendConstants(VkBlendFactor blendFactor)
@@ -610,13 +639,22 @@ void PipelineCompiler::InitBlendState(const LatteContextRegister& latteRegister,
 
 		entry.colorWriteMask = (renderTargetMask >> (i * 4)) & 0xF;
 		entry.colorBlendOp = GetVkBlendOp(blendControlReg.get_COLOR_COMB_FCN());
-		entry.srcColorBlendFactor = GetVkBlendFactor(blendControlReg.get_COLOR_SRCBLEND());
-		entry.dstColorBlendFactor = GetVkBlendFactor(blendControlReg.get_COLOR_DSTBLEND());
+		// BotWRecomp: 0x0B/0x0C used to become VK_BLEND_FACTOR_MAX_ENUM, so pipeline creation failed and the draw was never retried.
+		bool overrideColorDst = false;
+		VkBlendFactor forcedColorDst = VK_BLEND_FACTOR_ZERO;
+		entry.srcColorBlendFactor = MapVkBlendFactor(blendControlReg.get_COLOR_SRCBLEND(), true, overrideColorDst, forcedColorDst);
+		entry.dstColorBlendFactor = MapVkBlendFactor(blendControlReg.get_COLOR_DSTBLEND(), false, overrideColorDst, forcedColorDst);
+		if (overrideColorDst)
+			entry.dstColorBlendFactor = forcedColorDst;
 		if (blendControlReg.get_SEPARATE_ALPHA_BLEND())
 		{
 			entry.alphaBlendOp = GetVkBlendOp(blendControlReg.get_ALPHA_COMB_FCN());
-			entry.srcAlphaBlendFactor = GetVkBlendFactor(blendControlReg.get_ALPHA_SRCBLEND());
-			entry.dstAlphaBlendFactor = GetVkBlendFactor(blendControlReg.get_ALPHA_DSTBLEND());
+			bool overrideAlphaDst = false;
+			VkBlendFactor forcedAlphaDst = VK_BLEND_FACTOR_ZERO;
+			entry.srcAlphaBlendFactor = MapVkBlendFactor(blendControlReg.get_ALPHA_SRCBLEND(), true, overrideAlphaDst, forcedAlphaDst);
+			entry.dstAlphaBlendFactor = MapVkBlendFactor(blendControlReg.get_ALPHA_DSTBLEND(), false, overrideAlphaDst, forcedAlphaDst);
+			if (overrideAlphaDst)
+				entry.dstAlphaBlendFactor = forcedAlphaDst;
 		}
 		else
 		{
@@ -716,6 +754,19 @@ void PipelineCompiler::InitDepthStencilState()
 	bool depthEnable = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_Z_ENABLE();
 	auto depthFunc = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_Z_FUNC();
 	bool depthWriteEnable = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_Z_WRITE_ENABLE();
+	bool stencilEnableEarly = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_STENCIL_ENABLE();
+	bool backStencilEnableEarly = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_BACK_STENCIL_ENABLE();
+	// BotWRecomp: Vulkan rejects depth/stencil tests when the render pass has no depth attachment.
+	// The failure is sticky (Compile returns true and the pipeline stays null), so those draws never appear.
+	// Cemu detaches a depth buffer that is smaller than the scissor; the color target can still be valid.
+	const bool noDepthAttachment = !m_renderPassObj || m_renderPassObj->GetDepthFormat() == VK_FORMAT_UNDEFINED;
+	if (noDepthAttachment && (depthEnable || depthWriteEnable || stencilEnableEarly || backStencilEnableEarly))
+	{
+		const uint32 prim = (uint32)LatteGPUState.contextNew.VGT_PRIMITIVE_TYPE.get_PRIMITIVE_MODE();
+		title_diag_event(TITLE_DIAG_DEPTH_OFF, prim, depthEnable ? 1u : 0u, (stencilEnableEarly || backStencilEnableEarly) ? 1u : 0u, 0, 0, 0);
+		depthEnable = false;
+		depthWriteEnable = false;
+	}
 
 	// setup VkPipelineDepthStencilStateCreateInfo
 	depthStencilState.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -741,8 +792,8 @@ void PipelineCompiler::InitDepthStencilState()
 	depthStencilState.maxDepthBounds = 1.0f;
 
 	// get stencil control parameters
-	bool stencilEnable = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_STENCIL_ENABLE();
-	bool backStencilEnable = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_BACK_STENCIL_ENABLE();
+	bool stencilEnable = noDepthAttachment ? false : stencilEnableEarly;
+	bool backStencilEnable = noDepthAttachment ? false : backStencilEnableEarly;
 	auto frontStencilFunc = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_STENCIL_FUNC_F();
 	auto frontStencilZPass = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_STENCIL_ZPASS_F();
 	auto frontStencilZFail = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_STENCIL_ZFAIL_F();
@@ -849,6 +900,8 @@ bool PipelineCompiler::InitFromCurrentGPUState(PipelineInfo* pipelineInfo, const
 		m_rectEmulationGS = rectsEmulationGS_generate(pipelineInfo->vertexShader, latteRegister);
 		pipelineInfo->rectEmulationGS = m_rectEmulationGS;
 	}
+	if (isPrimitiveRect)
+		title_diag_event(TITLE_DIAG_RECT, 1, vkRenderer->m_featureControl.deviceExtensions.nv_fill_rectangle ? 1u : 0u, 0, 0, 0, 0);
 
 	// ##########################################################################################################################################
 
@@ -1010,7 +1063,14 @@ bool PipelineCompiler::Compile(bool forceCompile, bool isRenderThread, bool show
 	}
 	else
 	{
-		cemuLog_log(LogType::Force, "Failed to create graphics pipeline. Error {}", (sint32)result);
+		const auto& blend0 = LatteGPUState.contextNew.CB_BLENDN_CONTROL[0];
+		const uint32 prim = (uint32)LatteGPUState.contextNew.VGT_PRIMITIVE_TYPE.get_PRIMITIVE_MODE();
+		// BotWRecomp: include the primitive and blend factors. A MAX_ENUM factor fails here and is not retried.
+		cemuLog_log(LogType::Force, "Failed to create graphics pipeline. Error {} prim {:02x} blendC {:02x}/{:02x} blendA {:02x}/{:02x}",
+			(sint32)result, prim, (uint32)blend0.get_COLOR_SRCBLEND(), (uint32)blend0.get_COLOR_DSTBLEND(),
+			(uint32)blend0.get_ALPHA_SRCBLEND(), (uint32)blend0.get_ALPHA_DSTBLEND());
+		title_diag_event(TITLE_DIAG_PIPE_FAIL, (uint32)result, prim, (uint32)blend0.get_COLOR_SRCBLEND(), (uint32)blend0.get_COLOR_DSTBLEND(),
+			(uint32)blend0.get_ALPHA_SRCBLEND(), (uint32)blend0.get_ALPHA_DSTBLEND());
 		cemu_assert_debug(false);
 		return true; // true indicates that caller should no longer attempt to compile this pipeline again
 	}

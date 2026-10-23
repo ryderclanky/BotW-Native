@@ -429,6 +429,7 @@ private:
 
 		// draw sequence
 		bool drawSequenceSkip; // if true, skip draw_execute()
+		uint8 drawSequenceSkipWhy; // BotWRecomp: TITLE_DIAG_SKIP_* while drawSequenceSkip is set
 	}m_state;
 
 	std::unique_ptr<SwapchainInfoVk> m_mainSwapchainInfo{}, m_padSwapchainInfo{};

@@ -2,6 +2,7 @@
 #include "Cafe/HW/Latte/LatteAddrLib/LatteAddrLib.h"
 #include "config/ActiveSettings.h"
 #include "Cafe/CafeSystem.h"
+#include "title_diag.h"
 
 //#define BENCHMARK_TEXTURE_DECODING		// if defined, time it takes to decode textures will be measured and logged to log.txt
 
@@ -581,6 +582,12 @@ void LatteTextureLoader_loadTextureDataIntoSlice(LatteTexture* hostTexture, sint
 	if (hostTexture->overwriteInfo.hasResolutionOverwrite || hostTexture->overwriteInfo.hasFormatOverwrite)
 	{
 		// todo - ideally, we should scale/convert the data to the new format and resolution
+		// BotWRecomp: a static font that matches a render-target rule is cleared instead of uploaded.
+		const uint32 fmt = (uint32)hostTexture->format;
+		const uint32 hw = fmt & 0x3Fu;
+		const int kind = (hw == 0x1u || hw == 0x2u || (hw >= 0x31u && hw <= 0x35u)) ? TITLE_DIAG_RES_CLEAR_FONT : TITLE_DIAG_RES_CLEAR;
+		title_diag_event(kind, fmt, (uint32)hostTexture->width, (uint32)hostTexture->height, (uint32)hostTexture->tileMode,
+			(uint32)hostTexture->overwriteInfo.width, (uint32)hostTexture->overwriteInfo.height);
 		g_renderer->texture_clearSlice(hostTexture, sliceIndex, mipIndex);
 	}
 	else

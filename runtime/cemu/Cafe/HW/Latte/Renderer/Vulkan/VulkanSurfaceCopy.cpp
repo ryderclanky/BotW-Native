@@ -1,5 +1,6 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
+#include "title_diag.h"
 
 struct CopyShaderPushConstantData_t
 {
@@ -807,6 +808,11 @@ void VulkanRenderer::surfaceCopy_copySurfaceWithFormatConversion(LatteTexture* s
 	// todo - if not, we have to use drawcall based copying
 	if (!LatteTexture_doesEffectiveRescaleRatioMatch(srcTextureVk, texSrcMip, dstTextureVk, texDstMip))
 	{
+		// BotWRecomp: cemuLog_logDebug does not print in release. The copy stays skipped.
+		sint32 sw = 0, sh = 0, dw = 0, dh = 0;
+		sourceTexture->GetEffectiveSize(sw, sh, texSrcMip);
+		destinationTexture->GetEffectiveSize(dw, dh, texDstMip);
+		title_diag_event(TITLE_DIAG_COPY_RATIO, (uint32)sw, (uint32)sh, (uint32)dw, (uint32)dh, (uint32)sourceTexture->format, (uint32)destinationTexture->format);
 		cemuLog_logDebug(LogType::Force, "surfaceCopy_copySurfaceViaDrawcall(): Mismatching dimensions");
 		return;
 	}
@@ -814,6 +820,10 @@ void VulkanRenderer::surfaceCopy_copySurfaceWithFormatConversion(LatteTexture* s
 	// check if bpp size matches
 	if (srcTextureVk->GetBPP() != dstTextureVk->GetBPP())
 	{
+		sint32 sw = 0, sh = 0, dw = 0, dh = 0;
+		sourceTexture->GetEffectiveSize(sw, sh, texSrcMip);
+		destinationTexture->GetEffectiveSize(dw, dh, texDstMip);
+		title_diag_event(TITLE_DIAG_COPY_BPP, (uint32)sw, (uint32)sh, (uint32)dw, (uint32)dh, (uint32)sourceTexture->format, (uint32)destinationTexture->format);
 		cemuLog_logDebug(LogType::Force, "surfaceCopy_copySurfaceViaDrawcall(): Mismatching BPP");
 		return;
 	}

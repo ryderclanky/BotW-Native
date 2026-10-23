@@ -12,8 +12,15 @@
 #include "imgui/imgui_impl_vulkan.h"
 #include "Cafe/GameProfile/GameProfile.h"
 #include "util/helpers/helpers.h"
+#include "title_diag.h"
 
 extern bool hasValidFramebufferAttached;
+
+static void note_draw_skip(int why)
+{
+	const uint32 prim = (uint32)LatteGPUState.contextNew.VGT_PRIMITIVE_TYPE.get_PRIMITIVE_MODE();
+	title_diag_event(why, prim, 0, 0, 0, 0, 0);
+}
 
 // includes only states that may change during minimal drawcalls
 uint64 VulkanRenderer::draw_calculateMinimalGraphicsPipelineHash(const LatteFetchShader* fetchShader, const LatteContextRegister& lcr)
@@ -691,7 +698,8 @@ VkDescriptorSetInfo* VulkanRenderer::draw_getOrCreateDescriptorSet(PipelineInfo*
 			info.imageView = nullTexture1D.view;
 			info.sampler = nullTexture1D.sampler;
 			textureArray.emplace_back(info);
-			// cemuLog_log(LogType::Force, "Vulkan-Info: Shader 0x{:016x} uses 1D texture but bound texture has mismatching type (dim: 0x{:02x})", shader->baseHash, textureView->gx2Dim);
+			// BotWRecomp: a dimension mismatch used to bind a cleared texture with the log commented out.
+			title_diag_event(TITLE_DIAG_TEX_DIM, (uint32)(shader->baseHash >> 32), (uint32)shader->baseHash, (uint32)textureDim, (uint32)textureView->dim, (uint32)textureView->baseTexture->format, 0);
 			continue;
 		}
 		else if (textureDim == Latte::E_DIM::DIM_2D && (textureView->dim != Latte::E_DIM::DIM_2D && textureView->dim != Latte::E_DIM::DIM_2D_MSAA))
@@ -702,7 +710,8 @@ VkDescriptorSetInfo* VulkanRenderer::draw_getOrCreateDescriptorSet(PipelineInfo*
 			info.imageView = nullTexture2D.view;
 			info.sampler = nullTexture2D.sampler;
 			textureArray.emplace_back(info);
-			// cemuLog_log(LogType::Force, "Vulkan-Info: Shader 0x{:016x} uses 2D texture but bound texture has mismatching type (dim: 0x{:02x})", shader->baseHash, textureView->gx2Dim);
+			// BotWRecomp: a dimension mismatch used to bind a cleared texture with the log commented out.
+			title_diag_event(TITLE_DIAG_TEX_DIM, (uint32)(shader->baseHash >> 32), (uint32)shader->baseHash, (uint32)textureDim, (uint32)textureView->dim, (uint32)textureView->baseTexture->format, 1);
 			continue;
 		}
 
@@ -1300,6 +1309,7 @@ void VulkanRenderer::draw_handleSpecialState5()
 void VulkanRenderer::draw_beginSequence()
 {
 	m_state.drawSequenceSkip = false;
+	m_state.drawSequenceSkipWhy = 0;
 
 	bool streamoutEnable = LatteGPUState.contextRegister[mmVGT_STRMOUT_EN] != 0;
 
@@ -1307,8 +1317,9 @@ void VulkanRenderer::draw_beginSequence()
 	LatteSHRC_UpdateActiveShaders();
 	if (LatteGPUState.activeShaderHasError)
 	{
-		cemuLog_logDebugOnce(LogType::Force, "Skipping drawcalls due to shader error");
+		// BotWRecomp: cemuLog_logDebugOnce does not print in a release build.
 		m_state.drawSequenceSkip = true;
+		m_state.drawSequenceSkipWhy = TITLE_DIAG_SKIP_SHADER;
 		cemu_assert_debug(false);
 		return;
 	}
@@ -1322,6 +1333,7 @@ void VulkanRenderer::draw_beginSequence()
 		{
 			debug_printf("Rendertarget invalid\n");
 			m_state.drawSequenceSkip = true;
+			m_state.drawSequenceSkipWhy = TITLE_DIAG_SKIP_RT;
 			return; // no render target
 		}
 
@@ -1329,6 +1341,7 @@ void VulkanRenderer::draw_beginSequence()
 		{
 			debug_printf("Drawcall with no color buffer or depth buffer attached\n");
 			m_state.drawSequenceSkip = true;
+			m_state.drawSequenceSkipWhy = TITLE_DIAG_SKIP_ATTACH;
 			return; // no render target
 		}
 		LatteTexture_updateTextures();
@@ -1352,13 +1365,17 @@ void VulkanRenderer::draw_beginSequence()
 		rasterizerEnable = true;
 
 	if (rasterizerEnable == false && streamoutEnable == false)
+	{
 		m_state.drawSequenceSkip = true;
+		m_state.drawSequenceSkipWhy = TITLE_DIAG_SKIP_RAST;
+	}
 }
 
 void VulkanRenderer::draw_execute_first(uint32 baseVertex, uint32 baseInstance, uint32 instanceCount, uint32 count, MPTR indexDataMPTR, Latte::LATTE_VGT_DMA_INDEX_TYPE::E_INDEX_TYPE indexType, const LatteDrawcallContext& drawcallContext)
 {
 	if (m_state.drawSequenceSkip)
 	{
+		note_draw_skip(m_state.drawSequenceSkipWhy);
 		return;
 	}
 
@@ -1451,6 +1468,7 @@ void VulkanRenderer::draw_execute_first(uint32 baseVertex, uint32 baseInstance, 
 	{
 		// invalid/uninitialized pipeline
 		m_state.activeVertexDS = nullptr;
+		note_draw_skip(TITLE_DIAG_SKIP_PIPE);
 		return;
 	}
 
@@ -1526,6 +1544,7 @@ void VulkanRenderer::draw_execute_continued(uint32 baseVertex, uint32 baseInstan
 {
 	if (m_state.drawSequenceSkip)
 	{
+		note_draw_skip(m_state.drawSequenceSkipWhy);
 		return;
 	}
 
@@ -1640,6 +1659,7 @@ void VulkanRenderer::draw_execute_continued(uint32 baseVertex, uint32 baseInstan
 	{
 		// invalid/uninitialized pipeline
 		//m_state.activeVertexDS = nullptr;
+		note_draw_skip(TITLE_DIAG_SKIP_PIPE);
 		return;
 	}
 

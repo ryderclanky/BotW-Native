@@ -253,7 +253,14 @@ int32_t get_stat(PPCContext* c, const std::string& gpath, uint32_t out, uint32_t
 }
 
 std::string save_path(uint32_t account, const char* path) {
-    std::string base = account == 0xFF ? "/vol/save/common" : "/vol/save/" + std::to_string(0x80000000u + account);
+    // nn_save's account argument is a slot (1 = nn::act slot 1, 0xFF = common), not a decimal id.
+    // Slot 1 is persistent id 0x80000001. Wii U and Cemu name the directory with that id in hex,
+    // which is the folder SAVEInit creates. std::to_string would print 2147483649 and miss the files.
+    account &= 0xFFu;
+    char folder[16];
+    if (account == 0xFF) snprintf(folder, sizeof folder, "common");
+    else snprintf(folder, sizeof folder, "%08x", 0x80000000u + account);
+    std::string base = std::string("/vol/save/") + folder;
     std::string p = path ? path : "";
     if (!p.empty() && p[0] != '/') p = "/" + p;
     return base + p;

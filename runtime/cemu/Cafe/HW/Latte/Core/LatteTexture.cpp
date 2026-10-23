@@ -7,6 +7,7 @@
 #include "Cafe/HW/Latte/LatteAddrLib/LatteAddrLib.h"
 
 #include "Cafe/GraphicPack/GraphicPack2.h"
+#include "title_diag.h"
 
 #include <boost/container/small_vector.hpp>
 
@@ -317,6 +318,13 @@ void LatteTexture_copyData(LatteTexture* srcTexture, LatteTexture* dstTexture, s
 		dstTexture->GetEffectiveSize(effectiveWidth_src, effectiveHeight_src, 0);
 
 		debug_printf("texture_copyData(): Effective size mismatch\n");
+		// BotWRecomp: cemuLog_logDebug is compiled out of release builds.
+		{
+			sint32 sw = 0, sh = 0, dw = 0, dh = 0;
+			srcTexture->GetEffectiveSize(sw, sh, 0);
+			dstTexture->GetEffectiveSize(dw, dh, 0);
+			title_diag_event(TITLE_DIAG_COPY_RATIO, (uint32)sw, (uint32)sh, (uint32)dw, (uint32)dh, (uint32)srcTexture->format, (uint32)dstTexture->format);
+		}
 		cemuLog_logDebug(LogType::Force, "texture_copyData(): Effective size mismatch (due to texture rule)");
 		cemuLog_logDebug(LogType::Force, "Destination: origResolution {:04}x{:04} effectiveResolution {:04}x{:04} fmt {:04x} mipIndex {}", srcTexture->width, srcTexture->height, effectiveWidth_dst, effectiveHeight_dst, (uint32)dstTexture->format, 0);
 		cemuLog_logDebug(LogType::Force, "Source:      origResolution {:04}x{:04} effectiveResolution {:04}x{:04} fmt {:04x} mipIndex {}", srcTexture->width, srcTexture->height, effectiveWidth_src, effectiveHeight_src, (uint32)srcTexture->format, 0);
@@ -385,6 +393,7 @@ void LatteTexture_CopySlice(LatteTexture* srcTexture, sint32 srcSlice, sint32 sr
 		sint32 effectiveHeight_src = srcTexture->overwriteInfo.hasResolutionOverwrite ? srcTexture->overwriteInfo.height : srcTexture->height;
 		sint32 effectiveWidth_dst = dstTexture->overwriteInfo.hasResolutionOverwrite ? dstTexture->overwriteInfo.width : dstTexture->width;
 		sint32 effectiveHeight_dst = dstTexture->overwriteInfo.hasResolutionOverwrite ? dstTexture->overwriteInfo.height : dstTexture->height;
+		title_diag_event(TITLE_DIAG_COPY_RATIO, (uint32)effectiveWidth_src, (uint32)effectiveHeight_src, (uint32)effectiveWidth_dst, (uint32)effectiveHeight_dst, (uint32)srcTexture->format, (uint32)dstTexture->format);
 		if (cemuLog_isLoggingEnabled(LogType::TextureCache))
 		{
 			cemuLog_log(LogType::Force, "_copySlice(): Unable to sync textures with mismatching scale ratio (due to texture rule)");

@@ -27,6 +27,7 @@
 #include "Cafe/TitleList/GameInfo.h"
 
 #include "Cafe/HW/Latte/Core/LatteTiming.h" // vsync control
+#include "title_diag.h"
 
 #include <cstdint>
 #include <glslang/Public/ShaderLang.h>
@@ -358,6 +359,9 @@ void VulkanRenderer::GetDeviceFeatures()
 	m_featureControl.limits.minUniformBufferOffsetAlignment = std::max(prop2.properties.limits.minUniformBufferOffsetAlignment, (VkDeviceSize)4);
 	m_featureControl.limits.nonCoherentAtomSize = std::max(prop2.properties.limits.nonCoherentAtomSize, (VkDeviceSize)4);
 	cemuLog_log(LogType::Force, fmt::format("VulkanLimits: UBAlignment {0} nonCoherentAtomSize {1}", prop2.properties.limits.minUniformBufferOffsetAlignment, prop2.properties.limits.nonCoherentAtomSize));
+	cemuLog_log(LogType::Force, "VulkanFeatures: nv_fill_rectangle {} depth_range_unrestricted {}",
+		m_featureControl.deviceExtensions.nv_fill_rectangle ? 1 : 0,
+		m_featureControl.deviceExtensions.depth_range_unrestricted ? 1 : 0);
 	// calculate used limits
 	m_featureControl.limits.calcUniformBufferAlignmentM1 = std::max(m_featureControl.limits.minUniformBufferOffsetAlignment, m_featureControl.limits.nonCoherentAtomSize) - 1;
 }
@@ -2056,6 +2060,11 @@ void VulkanRenderer::QueryAvailableFormats()
 			//cemuLog_log(LogType::Force, "{}", missingStr.c_str());
 		}
 	}
+	cemuLog_log(LogType::Force, "VulkanFormats: r4g4 {} r5g6b5 {} r4g4b4a4 {} a1r5g5b5 {}",
+		m_supportedFormatInfo.fmt_r4g4_unorm_pack ? 1 : 0,
+		m_supportedFormatInfo.fmt_r5g6b5_unorm_pack ? 1 : 0,
+		m_supportedFormatInfo.fmt_r4g4b4a4_unorm_pack ? 1 : 0,
+		m_supportedFormatInfo.fmt_a1r5g5b5_unorm_pack ? 1 : 0);
 }
 
 bool VulkanRenderer::ImguiBegin(bool mainWindow)
@@ -3395,6 +3404,15 @@ void VulkanRenderer::renderTarget_setViewport(float x, float y, float width, flo
 
 	m_state.currentViewport.minDepth = nearZ;
 	m_state.currentViewport.maxDepth = farZ;
+
+	// BotWRecomp: depth outside [0,1] needs VK_EXT_depth_range_unrestricted. RTX 5060 has it; log the state anyway.
+	if (nearZ < 0.0f || nearZ > 1.0f || farZ < 0.0f || farZ > 1.0f)
+	{
+		uint32 nearBits = 0, farBits = 0;
+		memcpy(&nearBits, &nearZ, sizeof(nearBits));
+		memcpy(&farBits, &farZ, sizeof(farBits));
+		title_diag_event(TITLE_DIAG_VIEWPORT, (uint32)x, (uint32)y, (uint32)width, (uint32)height, nearBits, farBits);
+	}
 
 	vkCmdSetViewport(m_state.currentCommandBuffer, 0, 1, &m_state.currentViewport);
 }

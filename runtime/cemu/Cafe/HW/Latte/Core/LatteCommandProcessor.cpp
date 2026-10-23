@@ -85,6 +85,9 @@ public:
 			g_renderer->draw_execute(baseVertex, baseInstance, numInstances, count, MPTR_NULL, Latte::LATTE_VGT_DMA_INDEX_TYPE::E_INDEX_TYPE::AUTO, m_drawcallContext);
 		}
 		title_diag_draw(LatteGPUState.contextRegister[mmCB_COLOR0_BASE], LatteGPUState.contextRegister[mmCB_COLOR0_SIZE]);
+		title_diag_draw_state(LatteGPUState.contextRegister[mmVGT_PRIMITIVE_TYPE] & 0x3Fu,
+			LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_Z_ENABLE() ? 1 : 0,
+			LatteGPUState.contextNew.CB_COLOR_CONTROL.get_BLEND_MASK(), count);
 		performanceMonitor.cycle[performanceMonitor.cycleIndex].drawCallCounter++;
 		if (!m_drawcallContext.isFirst)
 			performanceMonitor.cycle[performanceMonitor.cycleIndex].fastDrawCallCounter++;
@@ -969,6 +972,7 @@ LatteCMDPtr LatteCP_itHLESwapScanBuffer(LatteCMDPtr cmd, uint32 nWords)
 	catchOpenGLError();
 	cemu_assert_debug(nWords == 1);
 	MPTR reserved1 = LatteReadCMD(); // reserved
+	title_diag_swap();
 	LatteRenderTarget_itHLESwapScanBuffer();
 	return cmd;
 }

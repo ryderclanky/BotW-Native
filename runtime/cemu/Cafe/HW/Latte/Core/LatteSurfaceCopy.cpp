@@ -5,6 +5,7 @@
 #include "Cafe/HW/Latte/Core/LatteSurfaceCopy.h"
 
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
+#include "title_diag.h"
 
 /* Surface copies are tricky to handle because we simulate unified memory on top of two separate memory systems: RAM and VRAM
  * Cemu may only have texture data in either RAM or VRAM, or both. And doing transfers to or from CPU can quickly become prohibitively expensive
@@ -122,6 +123,12 @@ void LatteSurfaceCopy_copySurfaceNew(const LatteSurfaceCopyParam& src, const Lat
 		}
 		else
 		{
+			// BotWRecomp: release builds drop this copy with no log. Do not invent a blit;
+			// some mismatches are false aliases.
+			sint32 sw = 0, sh = 0, dw = 0, dh = 0;
+			sourceTexture->GetEffectiveSize(sw, sh, sourceView->firstMip);
+			destinationTexture->GetEffectiveSize(dw, dh, destinationView->firstMip);
+			title_diag_event(TITLE_DIAG_COPY_RATIO, (uint32)sw, (uint32)sh, (uint32)dw, (uint32)dh, (uint32)sourceTexture->format, (uint32)destinationTexture->format);
 			debug_printf("gx2CP_itHLECopySurface(): Copy texture with non-matching effective size\n");
 		}
 		LatteTC_ResetTextureChangeTracker(destinationTexture);
