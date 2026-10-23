@@ -158,7 +158,7 @@ private:
 		uint32 alignmentM1 = alignment - 1;
 		uint32 bucketIndex = ulog2(size);
 #ifdef BOTWRECOMP
-		// BotWRecomp: any free range in a bigger size class fits, so take one from the smallest such class
+		// BotW-Native: any free range in a bigger size class fits, so take one from the smallest such class
 		// first. Scanning the own size class first walked long lists of slightly-too-small ranges (~5% of the
 		// GPU thread, per-draw index buffer allocations).
 		if (bucketIndex + 1 < 31 && (m_bucketUseMask >> (bucketIndex + 1)))

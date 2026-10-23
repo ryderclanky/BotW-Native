@@ -1,4 +1,4 @@
-// BotWRecomp shim: Cemu's window-system interface backed by the SDL window (runtime/src/host).
+// BotW-Native shim: Cemu's window-system interface backed by the SDL window (runtime/src/host).
 #pragma once
 #include <atomic>
 #include <stdint.h>

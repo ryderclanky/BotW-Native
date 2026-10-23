@@ -1,7 +1,7 @@
 These files are from Cemu (https://github.com/cemu-project/Cemu), commit
 a53cf0ece75964aa361056edab46f281dcc0bc44, and stay under the Mozilla Public License 2.0.
 The license text is runtime/cemu/LICENSE.txt. Modifications in this tree are marked
-`// BotWRecomp:`. They are not part of the MIT-licensed project code.
+`// BotW-Native:`. They are not part of the MIT-licensed project code.
 
 imgui_impl_vulkan.cpp (runtime/cemu/imgui/) is Dear ImGui's Vulkan backend and keeps
 Dear ImGui's license.

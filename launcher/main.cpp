@@ -1,4 +1,4 @@
-// Small Win32 launcher for BotWRecomp. It is not linked into the game. SDL3 is only used to
+// Small Win32 launcher for BotW-Native. It is not linked into the game. SDL3 is only used to
 // name keys and controller buttons the same way the game reads controls.ini.
 #define _WIN32_WINNT 0x0A00
 #define WINVER 0x0A00
@@ -137,7 +137,7 @@ std::string narrow(const std::wstring& w) {
 }
 
 void alert(const std::wstring& text, UINT flags = MB_OK | MB_ICONWARNING) {
-    MessageBoxW(g.hwnd, text.c_str(), L"BotW Recomp Launcher", flags);
+    MessageBoxW(g.hwnd, text.c_str(), L"BotW-Native Launcher", flags);
 }
 
 std::filesystem::path exe_dir() {
@@ -612,7 +612,7 @@ void import_path(const std::wstring& picked) {
         }
         text += L"\n\nImport anyway? The current save is backed up first.";
         UINT def = loc.dangerous ? MB_DEFBUTTON2 : MB_DEFBUTTON1;
-        if (MessageBoxW(g.hwnd, text.c_str(), L"BotW Recomp Launcher", MB_YESNO | MB_ICONWARNING | def) != IDYES) {
+        if (MessageBoxW(g.hwnd, text.c_str(), L"BotW-Native Launcher", MB_YESNO | MB_ICONWARNING | def) != IDYES) {
             cleanup_temp(tmp);
             set_status(L"Import cancelled.");
             return;
@@ -636,7 +636,7 @@ void on_migrate() {
         L"Copy save\\2147483649 to save\\80000001?\nThe old folder stays where it is.\nIf save\\80000001 already has files, it is backed up first.";
     if (!loc.warnings.empty()) text += L"\n\n" + widen(loc.warnings);
     UINT def = loc.dangerous ? MB_DEFBUTTON2 : MB_DEFBUTTON1;
-    if (MessageBoxW(g.hwnd, text.c_str(), L"BotW Recomp Launcher", MB_YESNO | MB_ICONWARNING | def) != IDYES) return;
+    if (MessageBoxW(g.hwnd, text.c_str(), L"BotW-Native Launcher", MB_YESNO | MB_ICONWARNING | def) != IDYES) return;
     auto result = saveimport::migrate_decimal(user_root());
     fill_saves();
     note_legacy_save();
@@ -665,7 +665,7 @@ void on_switch() {
     std::wstring title = widen(g.sets[static_cast<size_t>(i)].title);
     std::wstring text = L"Switch to \"" + title + L"\"?\nThe current save is backed up first.";
     if (!g.sets[static_cast<size_t>(i)].warnings.empty()) text += L"\n\n" + widen(g.sets[static_cast<size_t>(i)].warnings);
-    if (MessageBoxW(g.hwnd, text.c_str(), L"BotW Recomp Launcher", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    if (MessageBoxW(g.hwnd, text.c_str(), L"BotW-Native Launcher", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
     auto result = saveimport::switch_to(user_root(), g.sets[static_cast<size_t>(i)].dir);
     fill_saves();
     set_status(widen(result.message));
@@ -680,7 +680,7 @@ void on_delete() {
     }
     if (!have_user() || !ensure_stopped()) return;
     std::wstring title = widen(g.sets[static_cast<size_t>(i)].title);
-    if (MessageBoxW(g.hwnd, (L"Delete \"" + title + L"\"? This does not change the live save.").c_str(), L"BotW Recomp Launcher",
+    if (MessageBoxW(g.hwnd, (L"Delete \"" + title + L"\"? This does not change the live save.").c_str(), L"BotW-Native Launcher",
                     MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
         return;
     auto result = saveimport::delete_set(user_root(), g.sets[static_cast<size_t>(i)].dir);
@@ -850,7 +850,7 @@ void on_play() {
     std::error_code ec;
     bool looks = std::filesystem::is_regular_file(game_path / "code" / "U-King.rpx", ec);
     if (!looks) {
-        if (MessageBoxW(g.hwnd, L"That game folder does not contain code\\U-King.rpx.\nLaunch anyway?", L"BotW Recomp Launcher",
+        if (MessageBoxW(g.hwnd, L"That game folder does not contain code\\U-King.rpx.\nLaunch anyway?", L"BotW-Native Launcher",
                         MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
             return;
     }
@@ -1192,7 +1192,7 @@ int main(int, char**) {
     wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     wc.lpszClassName = L"BotWLauncher";
     RegisterClassW(&wc);
-    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"BotW Recomp Launcher", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT,
+    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"BotW-Native Launcher", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT,
                                 CW_USEDEFAULT, MulDiv(1000, g.dpi, 96), MulDiv(860, g.dpi, 96), nullptr, nullptr, g.inst, nullptr);
     if (!hwnd) return 1;
     ShowWindow(hwnd, SW_SHOW);

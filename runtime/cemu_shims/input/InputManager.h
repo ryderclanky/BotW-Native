@@ -1,4 +1,4 @@
-// BotWRecomp shim: Cemu's input manager is not used by the GPU path.
+// BotW-Native shim: Cemu's input manager is not used by the GPU path.
 #pragma once
 #include <memory>
 class VPADController {

@@ -1,2 +1,2 @@
 #pragma once
-// BotWRecomp shim: no OpenGL on macOS.
+// BotW-Native shim: no OpenGL on macOS.

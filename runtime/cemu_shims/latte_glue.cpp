@@ -1,4 +1,4 @@
-// BotWRecomp: glue between this runtime and the vendored Cemu Latte GPU (Cemu environment).
+// BotW-Native: glue between this runtime and the vendored Cemu Latte GPU (Cemu environment).
 // Implements runtime/src/latte/latte.h on top of Cemu's command processor:
 //  - GX2 submissions (latte::submit) become ring words: INDIRECT_BUFFER + EVENT_WRITE_EOP(timestamp),
 //    the same pair Cemu's TCL queues; Cemu's CP drains them through TCL::TCLGPUReadRBWord.

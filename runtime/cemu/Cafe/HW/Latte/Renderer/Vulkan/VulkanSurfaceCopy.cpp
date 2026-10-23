@@ -808,7 +808,7 @@ void VulkanRenderer::surfaceCopy_copySurfaceWithFormatConversion(LatteTexture* s
 	// todo - if not, we have to use drawcall based copying
 	if (!LatteTexture_doesEffectiveRescaleRatioMatch(srcTextureVk, texSrcMip, dstTextureVk, texDstMip))
 	{
-		// BotWRecomp: cemuLog_logDebug does not print in release. The copy stays skipped.
+		// BotW-Native: cemuLog_logDebug does not print in release. The copy stays skipped.
 		sint32 sw = 0, sh = 0, dw = 0, dh = 0;
 		sourceTexture->GetEffectiveSize(sw, sh, texSrcMip);
 		destinationTexture->GetEffectiveSize(dw, dh, texDstMip);

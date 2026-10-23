@@ -1,4 +1,4 @@
-// BotWRecomp shim: at most one built-in pack is active, the resolution scaling texture rules
+// BotW-Native shim: at most one built-in pack is active, the resolution scaling texture rules
 // (graphic_pack_shim.cpp, --scale); no custom shaders.
 #pragma once
 #include <memory>

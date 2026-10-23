@@ -1,4 +1,4 @@
-// BotWRecomp: Metal-only frame capture (--capture). The rest of the Latte glue lives in
+// BotW-Native: Metal-only frame capture (--capture). The rest of the Latte glue lives in
 // latte_glue.cpp so Windows and Linux can build it as plain C++.
 #include <TargetConditionals.h>
 #if TARGET_OS_IOS

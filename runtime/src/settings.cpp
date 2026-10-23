@@ -22,7 +22,7 @@ void save_locked() {
     if (g_path.empty()) return;
     FILE* f = fopen(g_path.c_str(), "w");
     if (!f) return;
-    fprintf(f, "# BotWRecomp settings (also editable from the in-game menu: touchpad, L3+R3 or F1)\n");
+    fprintf(f, "# BotW-Native settings (also editable from the in-game menu: touchpad, L3+R3 or F1)\n");
     fprintf(f, "fps=%d\nscale=%g\ndisplay=%d\nfilter=%d\ngyro=%d\nrumble=%d\nlayout=%d\nshow_fps=%d\nvolume=%d\ntouch=%d\ntouch_hidden=%d\n", g_s.fps,
             g_s.scale, g_s.display, g_s.filter, g_s.gyro, g_s.rumble, g_s.layout, g_s.show_fps, g_s.volume, g_s.touch, g_s.touch_hidden);
     fclose(f);

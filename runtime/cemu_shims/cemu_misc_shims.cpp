@@ -1,4 +1,4 @@
-// BotWRecomp: small symbols the vendored GPU code expects from parts of Cemu that are not vendored.
+// BotW-Native: small symbols the vendored GPU code expects from parts of Cemu that are not vendored.
 #if defined(__APPLE__)
 #include <mach/mach_time.h>
 #else

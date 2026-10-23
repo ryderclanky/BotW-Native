@@ -1,4 +1,4 @@
-// BotWRecomp: replaces Cemu's LatteOverlay. Drawn with Cemu's ImGui pass right after the TV image
+// BotW-Native: replaces Cemu's LatteOverlay. Drawn with Cemu's ImGui pass right after the TV image
 // (LatteRenderTarget_copyToBackbuffer, GPU thread): an optional FPS counter and the in-game settings
 // menu (runtime/src/host/menu.cpp). ImGui's built-in font is used.
 #include <imgui.h>
@@ -82,7 +82,7 @@ void LatteOverlay_render(bool padView) {
     if (ImGui::Begin("##menu", nullptr, overlay)) {
         ImGui::SetWindowFontScale(ui * 1.25f);
         const float label_w = 150 * ui, value_w = 230 * ui;
-        ImGui::TextUnformatted("BotWRecomp settings");
+        ImGui::TextUnformatted("BotW-Native settings");
         const float xs = ImGui::GetFrameHeight();  // X in the top-right corner
         ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - xs);
         if (ImGui::Button("X", {xs, xs})) menu::close();

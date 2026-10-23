@@ -1,4 +1,4 @@
-// BotWRecomp: built-in resolution scaling. The texture redefine rules of Cemu's BotW Graphics pack
+// BotW-Native: built-in resolution scaling. The texture redefine rules of Cemu's BotW Graphics pack
 // (botw_texture_rules.inc) resize the game's render targets by g_render_scale; Cemu's texture cache
 // and render-target code then scale viewports and scissors to match.
 #include "Cafe/HW/Latte/ISA/LatteReg.h"

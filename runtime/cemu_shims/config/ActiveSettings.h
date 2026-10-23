@@ -1,4 +1,4 @@
-// BotWRecomp shim: Cemu's ActiveSettings (paths and debug switches) for the vendored GPU code.
+// BotW-Native shim: Cemu's ActiveSettings (paths and debug switches) for the vendored GPU code.
 #pragma once
 #include <filesystem>
 #include <fmt/format.h>

@@ -698,7 +698,7 @@ VkDescriptorSetInfo* VulkanRenderer::draw_getOrCreateDescriptorSet(PipelineInfo*
 			info.imageView = nullTexture1D.view;
 			info.sampler = nullTexture1D.sampler;
 			textureArray.emplace_back(info);
-			// BotWRecomp: a dimension mismatch used to bind a cleared texture with the log commented out.
+			// BotW-Native: a dimension mismatch used to bind a cleared texture with the log commented out.
 			title_diag_event(TITLE_DIAG_TEX_DIM, (uint32)(shader->baseHash >> 32), (uint32)shader->baseHash, (uint32)textureDim, (uint32)textureView->dim, (uint32)textureView->baseTexture->format, 0);
 			continue;
 		}
@@ -710,7 +710,7 @@ VkDescriptorSetInfo* VulkanRenderer::draw_getOrCreateDescriptorSet(PipelineInfo*
 			info.imageView = nullTexture2D.view;
 			info.sampler = nullTexture2D.sampler;
 			textureArray.emplace_back(info);
-			// BotWRecomp: a dimension mismatch used to bind a cleared texture with the log commented out.
+			// BotW-Native: a dimension mismatch used to bind a cleared texture with the log commented out.
 			title_diag_event(TITLE_DIAG_TEX_DIM, (uint32)(shader->baseHash >> 32), (uint32)shader->baseHash, (uint32)textureDim, (uint32)textureView->dim, (uint32)textureView->baseTexture->format, 1);
 			continue;
 		}
@@ -1317,7 +1317,7 @@ void VulkanRenderer::draw_beginSequence()
 	LatteSHRC_UpdateActiveShaders();
 	if (LatteGPUState.activeShaderHasError)
 	{
-		// BotWRecomp: cemuLog_logDebugOnce does not print in a release build.
+		// BotW-Native: cemuLog_logDebugOnce does not print in a release build.
 		m_state.drawSequenceSkip = true;
 		m_state.drawSequenceSkipWhy = TITLE_DIAG_SKIP_SHADER;
 		cemu_assert_debug(false);

@@ -1,4 +1,4 @@
-// BotWRecomp shim: the running title.
+// BotW-Native shim: the running title.
 #pragma once
 #include <stdint.h>
 

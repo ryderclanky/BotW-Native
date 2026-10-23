@@ -1,4 +1,4 @@
-// controls.ini shared by BotWRecomp and BotWLauncher. No SDL and no Win32: the game resolves
+// controls.ini shared by BotW-Native and BotWLauncher. No SDL and no Win32: the game resolves
 // the names at startup, and the launcher writes the same text.
 #pragma once
 

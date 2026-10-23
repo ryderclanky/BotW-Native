@@ -259,7 +259,7 @@ bool save(const std::filesystem::path& path, const std::vector<Binding>& rows, s
         err = "could not write " + path_text(path);
         return false;
     }
-    out << "# BotWRecomp controls. One action per line. Delete this file to use the built-in map.\n"
+    out << "# BotW-Native controls. One action per line. Delete this file to use the built-in map.\n"
            "# key and key2 are SDL scancode names (SDL_GetScancodeName), for example \"Left Shift\" or Return.\n"
            "# pad is a controller source. Face buttons are positions, not the Wii U letters:\n"
            "#   east = right face (Xbox B / Circle), south = bottom (Xbox A / Cross),\n"

@@ -861,13 +861,13 @@ static VulkanRenderer* s_instanceDuringDestroy = nullptr;
 
 VulkanRenderer::~VulkanRenderer()
 {
-	// BotWRecomp: g_renderer is already null here. Member destructors call GetInstance().
+	// BotW-Native: g_renderer is already null here. Member destructors call GetInstance().
 	s_instanceDuringDestroy = this;
 	SubmitCommandBuffer();
 	WaitDeviceIdle();
 	WaitCommandBufferFinished(GetCurrentCommandBufferId());
 	// shut down pipeline save thread
-	// BotWRecomp: the save thread starts in Initialize(). A device that never got that far
+	// BotW-Native: the save thread starts in Initialize(). A device that never got that far
 	// must not throw from std::thread::join during destruction.
 	m_destructionRequested = true;
 	m_pipeline_cache_semaphore.notify();
@@ -3405,7 +3405,7 @@ void VulkanRenderer::renderTarget_setViewport(float x, float y, float width, flo
 	m_state.currentViewport.minDepth = nearZ;
 	m_state.currentViewport.maxDepth = farZ;
 
-	// BotWRecomp: depth outside [0,1] needs VK_EXT_depth_range_unrestricted. RTX 5060 has it; log the state anyway.
+	// BotW-Native: depth outside [0,1] needs VK_EXT_depth_range_unrestricted. RTX 5060 has it; log the state anyway.
 	if (nearZ < 0.0f || nearZ > 1.0f || farZ < 0.0f || farZ > 1.0f)
 	{
 		uint32 nearBits = 0, farBits = 0;

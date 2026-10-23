@@ -232,7 +232,7 @@ void judge(Located& loc) {
     if (sw && wiiu) warns.push_back("Some .sav files are Switch (little-endian) and some are Wii U (big-endian).");
     if (sw) {
         warns.push_back(
-            "This is a Switch save (little-endian). BotWRecomp reads Wii U big-endian saves. Convert it before playing; "
+            "This is a Switch save (little-endian). BotW-Native reads Wii U big-endian saves. Convert it before playing; "
             "importing it unchanged will not load.");
     }
     if (newer) {

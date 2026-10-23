@@ -189,7 +189,7 @@ public:
 	static std::vector<DeviceInfo> GetDevices();
 	VulkanRenderer();
 	virtual ~VulkanRenderer();
-	// BotWRecomp: unique_ptr clears the global before the destructor runs. Member
+	// BotW-Native: unique_ptr clears the global before the destructor runs. Member
 	// cleanup still calls GetInstance(), so the delete path publishes `this` and
 	// drops it only after the destructor has finished.
 	static void operator delete(void* p);
@@ -429,7 +429,7 @@ private:
 
 		// draw sequence
 		bool drawSequenceSkip; // if true, skip draw_execute()
-		uint8 drawSequenceSkipWhy; // BotWRecomp: TITLE_DIAG_SKIP_* while drawSequenceSkip is set
+		uint8 drawSequenceSkipWhy; // BotW-Native: TITLE_DIAG_SKIP_* while drawSequenceSkip is set
 	}m_state;
 
 	std::unique_ptr<SwapchainInfoVk> m_mainSwapchainInfo{}, m_padSwapchainInfo{};

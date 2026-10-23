@@ -230,7 +230,7 @@ static VkBlendFactor GetVkBlendFactor(Latte::LATTE_CB_BLENDN_CONTROL::E_BLENDFAC
 	};
 	if ((uint32)factor >= std::size(factors))
 	{
-		// BotWRecomp: an out-of-range factor used to index off this table.
+		// BotW-Native: an out-of-range factor used to index off this table.
 		title_diag_event(TITLE_DIAG_BLEND_BAD, (uint32)factor, 0, 0, 0, 0, 0);
 		return VK_BLEND_FACTOR_ZERO;
 	}
@@ -639,7 +639,7 @@ void PipelineCompiler::InitBlendState(const LatteContextRegister& latteRegister,
 
 		entry.colorWriteMask = (renderTargetMask >> (i * 4)) & 0xF;
 		entry.colorBlendOp = GetVkBlendOp(blendControlReg.get_COLOR_COMB_FCN());
-		// BotWRecomp: 0x0B/0x0C used to become VK_BLEND_FACTOR_MAX_ENUM, so pipeline creation failed and the draw was never retried.
+		// BotW-Native: 0x0B/0x0C used to become VK_BLEND_FACTOR_MAX_ENUM, so pipeline creation failed and the draw was never retried.
 		bool overrideColorDst = false;
 		VkBlendFactor forcedColorDst = VK_BLEND_FACTOR_ZERO;
 		entry.srcColorBlendFactor = MapVkBlendFactor(blendControlReg.get_COLOR_SRCBLEND(), true, overrideColorDst, forcedColorDst);
@@ -756,7 +756,7 @@ void PipelineCompiler::InitDepthStencilState()
 	bool depthWriteEnable = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_Z_WRITE_ENABLE();
 	bool stencilEnableEarly = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_STENCIL_ENABLE();
 	bool backStencilEnableEarly = LatteGPUState.contextNew.DB_DEPTH_CONTROL.get_BACK_STENCIL_ENABLE();
-	// BotWRecomp: Vulkan rejects depth/stencil tests when the render pass has no depth attachment.
+	// BotW-Native: Vulkan rejects depth/stencil tests when the render pass has no depth attachment.
 	// The failure is sticky (Compile returns true and the pipeline stays null), so those draws never appear.
 	// Cemu detaches a depth buffer that is smaller than the scissor; the color target can still be valid.
 	const bool noDepthAttachment = !m_renderPassObj || m_renderPassObj->GetDepthFormat() == VK_FORMAT_UNDEFINED;
@@ -1065,7 +1065,7 @@ bool PipelineCompiler::Compile(bool forceCompile, bool isRenderThread, bool show
 	{
 		const auto& blend0 = LatteGPUState.contextNew.CB_BLENDN_CONTROL[0];
 		const uint32 prim = (uint32)LatteGPUState.contextNew.VGT_PRIMITIVE_TYPE.get_PRIMITIVE_MODE();
-		// BotWRecomp: include the primitive and blend factors. A MAX_ENUM factor fails here and is not retried.
+		// BotW-Native: include the primitive and blend factors. A MAX_ENUM factor fails here and is not retried.
 		cemuLog_log(LogType::Force, "Failed to create graphics pipeline. Error {} prim {:02x} blendC {:02x}/{:02x} blendA {:02x}/{:02x}",
 			(sint32)result, prim, (uint32)blend0.get_COLOR_SRCBLEND(), (uint32)blend0.get_COLOR_DSTBLEND(),
 			(uint32)blend0.get_ALPHA_SRCBLEND(), (uint32)blend0.get_ALPHA_DSTBLEND());

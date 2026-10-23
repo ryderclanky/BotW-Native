@@ -1,4 +1,4 @@
-// BotWRecomp: minimal replacement for Cemu's imgui_extension.cpp (no embedded fonts/overlay).
+// BotW-Native: minimal replacement for Cemu's imgui_extension.cpp (no embedded fonts/overlay).
 #include "imgui/imgui_extension.h"
 
 void ImRotateStart() {}

@@ -1,4 +1,4 @@
-// BotWRecomp shim: the subset of Cemu's configuration the vendored GPU code reads, fixed defaults.
+// BotW-Native shim: the subset of Cemu's configuration the vendored GPU code reads, fixed defaults.
 #pragma once
 #include <stdint.h>
 #include <array>
@@ -16,7 +16,7 @@ enum class AccurateShaderMulOption { False = 0, True = 1 };
 enum class MetalBufferCacheMode { Auto, DevicePrivate, DeviceShared, Host };
 enum class PositionInvariance { Auto, False, True };
 enum class ScreenPosition { kDisabled = 0, kTopLeft, kTopCenter, kTopRight, kBottomLeft, kBottomCenter, kBottomRight };
-enum FullscreenScaling { kKeepAspectRatio = 0, kStretch, kFillCrop };  // kFillCrop: BotWRecomp (cover, crop overflow)
+enum FullscreenScaling { kKeepAspectRatio = 0, kStretch, kFillCrop };  // kFillCrop: BotW-Native (cover, crop overflow)
 enum UpscalingFilter { kLinearFilter = 0, kBicubicFilter, kBicubicHermiteFilter, kNearestNeighborFilter };
 enum class GraphicAPI { kOpenGL = 0, kVulkan, kMetal };
 

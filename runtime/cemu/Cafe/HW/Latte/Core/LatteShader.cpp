@@ -1059,7 +1059,7 @@ struct ShaderStateDirectHash
 
 std::vector<uint64> s_shaderStateCacheKeys;
 size_t s_shaderStateCacheCleanupIndex = 0;
-std::unordered_map< /* BotWRecomp: was robin_hood::unordered_flat_map */ uint64, ShaderStateInfo, ShaderStateDirectHash> s_shaderStateCache;
+std::unordered_map< /* BotW-Native: was robin_hood::unordered_flat_map */ uint64, ShaderStateInfo, ShaderStateDirectHash> s_shaderStateCache;
 // also benchmarked here but didn't perform better or only marginally better and not worth pulling in an extra library:
 // jg::dense_hash_map<uint64, ShaderStateInfo, FPHDirectHash>
 // folly::F14FastMap<uint64, ShaderStateInfo, FPHDirectHash>

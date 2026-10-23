@@ -1,4 +1,4 @@
-// BotWRecomp: backend for Cemu's logging API (Cemu/Logging/CemuLogging.h) -> runtime log.
+// BotW-Native: backend for Cemu's logging API (Cemu/Logging/CemuLogging.h) -> runtime log.
 // Only LogType::Force messages (and APIErrors) are printed; the rest is filtered like a release Cemu.
 #include "Cemu/Logging/CemuLogging.h"
 

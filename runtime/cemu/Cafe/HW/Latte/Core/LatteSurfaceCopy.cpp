@@ -123,7 +123,7 @@ void LatteSurfaceCopy_copySurfaceNew(const LatteSurfaceCopyParam& src, const Lat
 		}
 		else
 		{
-			// BotWRecomp: release builds drop this copy with no log. Do not invent a blit;
+			// BotW-Native: release builds drop this copy with no log. Do not invent a blit;
 			// some mismatches are false aliases.
 			sint32 sw = 0, sh = 0, dw = 0, dh = 0;
 			sourceTexture->GetEffectiveSize(sw, sh, sourceView->firstMip);

@@ -1,4 +1,4 @@
-// BotWRecomp shim: what the vendored GPU code takes from Cemu's GX2.h. The GX2 library itself
+// BotW-Native shim: what the vendored GPU code takes from Cemu's GX2.h. The GX2 library itself
 // lives in runtime/src/gx2 (own environment).
 #pragma once
 #include "Cafe/HW/Latte/Core/LatteConst.h"

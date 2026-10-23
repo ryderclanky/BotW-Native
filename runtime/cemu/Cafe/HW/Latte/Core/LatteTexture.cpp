@@ -318,7 +318,7 @@ void LatteTexture_copyData(LatteTexture* srcTexture, LatteTexture* dstTexture, s
 		dstTexture->GetEffectiveSize(effectiveWidth_src, effectiveHeight_src, 0);
 
 		debug_printf("texture_copyData(): Effective size mismatch\n");
-		// BotWRecomp: cemuLog_logDebug is compiled out of release builds.
+		// BotW-Native: cemuLog_logDebug is compiled out of release builds.
 		{
 			sint32 sw = 0, sh = 0, dw = 0, dh = 0;
 			srcTexture->GetEffectiveSize(sw, sh, 0);

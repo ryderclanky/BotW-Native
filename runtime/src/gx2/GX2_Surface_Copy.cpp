@@ -255,7 +255,7 @@ void GX2CopySurfaceInternal(GX2Surface* srcSurface, uint32 srcMip, uint32 srcSli
 		(uint32)dstSurface->tileMode.value(), (uint32)dstSurface->format.value(), dstMip, dstSlice);
 
 	bool isGX2CPUCopy = srcSurface->tileMode == Latte::E_GX2TILEMODE::TM_LINEAR_SPECIAL || dstSurface->tileMode == Latte::E_GX2TILEMODE::TM_LINEAR_SPECIAL;
-	// BotWRecomp: for GX2 CPU copies Cemu fills two LatteSurfaceCopyParam structs, queues them as an async command
+	// BotW-Native: for GX2 CPU copies Cemu fills two LatteSurfaceCopyParam structs, queues them as an async command
 	// for its GPU thread (LatteAsyncCommand_queueTextureCopy -> LatteSurfaceCopy_copySurfaceNew) and spins until the
 	// async queue is empty. This runtime has no such side channel, so the CPU copy uses the IT_HLE_COPY_SURFACE_NEW
 	// packet below (its GPU handler calls the same LatteSurfaceCopy_copySurfaceNew, and the packet carries exactly the

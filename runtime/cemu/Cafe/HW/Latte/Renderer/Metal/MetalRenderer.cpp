@@ -527,7 +527,7 @@ void MetalRenderer::DrawBackbufferQuad(LatteTextureView* texView, RendererOutput
 
     renderCommandEncoder->setViewport(MTL::Viewport{(double)imageX, (double)imageY, (double)imageWidth, (double)imageHeight, 0.0, 1.0});
     {
-        // BotWRecomp: the image may extend past the drawable (fill/crop mode); the scissor must not
+        // BotW-Native: the image may extend past the drawable (fill/crop mode); the scissor must not
         auto* target = layer.GetDrawable()->texture();
         sint32 sx0 = std::max(imageX, 0), sy0 = std::max(imageY, 0);
         sint32 sx1 = std::min(imageX + imageWidth, (sint32)target->width());

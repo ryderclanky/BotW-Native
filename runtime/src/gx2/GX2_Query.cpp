@@ -23,7 +23,7 @@ namespace GX2
 	{
 		if (isGPUQuery)
 		{
-			// BotWRecomp: Cemu's XCX (title 00050000101c4c00/101c4d00/10116100) branch that writes a fake result instead
+			// BotW-Native: Cemu's XCX (title 00050000101c4c00/101c4d00/10116100) branch that writes a fake result instead
 			// of the packets below is dropped; for every other title Cemu takes this path.
 			{
 				GX2ReserveCmdSpace(5 * _QUERY_REG_COUNT);

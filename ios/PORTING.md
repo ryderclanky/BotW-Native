@@ -1,4 +1,4 @@
-# BotWRecomp on iOS — porting notes
+# BotW-Native on iOS — porting notes
 
 These are the original iPhone and Mac notes from upstream BotW Recompiled. Windows Vulkan is
 documented in the [repository README](../README.md). Metal remains the Apple backend.
