@@ -15,9 +15,13 @@
 namespace {
 constexpr int kAvgFrames = 8;
 constexpr double kTicksPerSecond = 62156250.0;  // OSGetSystemTime
-float g_delta = 1.0f;                            // frame time in 1/30 s units
+// 1/30 s units. Read only while fps60() is on, so the first UI step is one 60 fps frame
+// before the measured average exists.
+float g_delta = 0.5f;
 double g_dt[kAvgFrames];
 int g_dt_n = 0;
+int g_span_logs = 0;
+int g_clamp_logs = 0;
 bool g_cap30 = false;      // a cutscene that must run at 30 fps is playing
 uint32_t g_cap_event = 0;  // its event id
 bool fps60() { return g_target_fps >= 60; }
@@ -45,11 +49,30 @@ BOTW_HOOK(0x031facec) {  // lwz r0, 8(r1): swap count, compared against the flip
     if (fps60() && !g_cap30) c->r[12] = c->r[0];
 }
 
-// stw r0, 120(r30) in the framework's frame function: r0:r12 = OSGetSystemTime ticks since last frame
+// stw r0, 120(r30) in the framework's frame function: r0:r12 = OSGetSystemTime ticks since last frame.
+// The high word is already stored. The next instruction stores r12 at +124, so the low word is
+// updated through the register. A boot frame of several seconds (last timestamp still 0) steps the
+// title timeline once, which skips the logo fade-in, the TitleBG scene and the BGM cue and leaves
+// the idle "(A) Start" panes. The same cap is the 20 fps floor g_delta already applies (1.5).
 BOTW_HOOK(0x031fa97c) {
+    uint64_t ticks = ((uint64_t)c->r[0] << 32) | c->r[12];
+    const uint64_t kMaxStep = (uint64_t)(kTicksPerSecond / 20.0);
+    const bool clamp = ticks > kMaxStep;
+    if (g_span_logs < 4) {
+        g_span_logs++;
+        LOG("frame span %.3fs%s", (double)ticks / kTicksPerSecond, clamp ? " (clamped to 50 ms)" : "");
+    } else if (clamp && g_clamp_logs < 8) {
+        g_clamp_logs++;
+        LOG("frame span %.3fs clamped to 50 ms", (double)ticks / kTicksPerSecond);
+    }
+    if (clamp) {
+        ticks = kMaxStep;
+        c->r[0] = (uint32_t)(ticks >> 32);
+        c->r[12] = (uint32_t)ticks;
+        mem::w32(c->r[30] + 120, c->r[0]);
+    }
     if (!fps60()) return;
     if (g_dt_n == 0) data_patches();
-    uint64_t ticks = ((uint64_t)c->r[0] << 32) | c->r[12];
     g_dt[g_dt_n++ % kAvgFrames] = ticks / kTicksPerSecond;
     int n = std::min(g_dt_n, kAvgFrames);
     double sum = 0;

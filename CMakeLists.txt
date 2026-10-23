@@ -222,6 +222,17 @@ if(BOTW_ENABLE_METAL)
   target_compile_definitions(BotWRecomp PRIVATE ENABLE_METAL)
 endif()
 
+# Community SDL game controller database, copied next to the executable.
+# SDL_AddGamepadMappingsFromFile reads it at startup. The compile path is the
+# fallback when the process is not started from the build directory.
+set(_botw_controller_db "${CMAKE_SOURCE_DIR}/runtime/gamecontrollerdb.txt")
+file(TO_CMAKE_PATH "${_botw_controller_db}" _botw_controller_db_fwd)
+target_compile_definitions(BotWRecomp PRIVATE "BOTW_GAMECONTROLLER_DB=\"${_botw_controller_db_fwd}\"")
+add_custom_command(TARGET BotWRecomp POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${_botw_controller_db}" "$<TARGET_FILE_DIR:BotWRecomp>/gamecontrollerdb.txt"
+  VERBATIM)
+
 set(_botw_glslang "")
 if(BOTW_ENABLE_VULKAN)
   if(TARGET glslang::glslang)
