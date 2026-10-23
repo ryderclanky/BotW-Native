@@ -6,6 +6,7 @@
 #include <chrono>
 #include <thread>
 
+#include "coreinit/mods.h"
 #include "hle.h"
 #include "host/window.h"
 #include "thread.h"
@@ -31,6 +32,7 @@ uint32_t build_argv(const char* rpx) {
 
 void request_exit(int code) {
     g_exit_code = code;
+    mods::log_shutdown();
     // give the log a moment, then leave without running host static destructors
     fflush(stderr);
     _exit(code);
@@ -39,6 +41,7 @@ void request_exit(int code) {
 void host_main_loop() {
     window::run();
     if (g_run_seconds) threads::dump();  // test runs: where every thread was at the end
+    mods::log_shutdown();
     fflush(stderr);
     _exit(0);
 }

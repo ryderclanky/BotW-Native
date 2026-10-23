@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <string>
 
+#include "coreinit/mods.h"
 #include "hle.h"
 #include "loader.h"
 #include "os.h"
@@ -32,7 +33,7 @@ std::string g_game_root;   // contains code/, content/, meta/
 std::string g_user_root;   // saves, logs, shader cache (see default_user_root)
 bool g_headless = false;
 bool g_mute = false;       // no audio output (on-screen test runs)
-int g_run_seconds = 0;     // --seconds N: exit after N seconds (tests)
+int g_run_seconds = 0;     // --seconds N (N > 0): exit after N seconds. 0 runs until the window closes.
 float g_render_scale = 0;  // --scale N: render targets N times the native 1280x720 (graphic_pack_shim.cpp); 0 = fit the display
 int g_target_fps = 60;       // --fps 30: the game's own pacing (game/fps.cpp)
 uint64_t g_trace_from = 0, g_trace_to = 0;  // --trace-frames A-B: HLE call trace for frames [A, B)
@@ -144,6 +145,7 @@ int main(int argc, char** argv) {
     Settings opt = settings::get();
 
     int capture_every = 0;
+    bool start_fullscreen = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--game" && i + 1 < argc) g_game_root = argv[++i];
@@ -155,7 +157,10 @@ int main(int argc, char** argv) {
         else if (a == "--trace-hle") g_trace_hle = 1;
         else if (a == "--no-gyro") opt.gyro = false;
         else if (a == "--trace-frames" && i + 1 < argc) sscanf(argv[++i], "%llu-%llu", &g_trace_from, &g_trace_to);
-        else if (a == "--seconds" && i + 1 < argc) g_run_seconds = atoi(argv[++i]);
+        else if (a == "--seconds" && i + 1 < argc) {
+            int n = atoi(argv[++i]);
+            g_run_seconds = n > 0 ? n : 0;
+        }
         else if (a == "--fps" && i + 1 < argc) opt.fps = atoi(argv[++i]) >= 60 ? 60 : 30;
         else if (a == "--renderer" && i + 1 < argc) latte::select_backend(argv[++i]);
         else if (a == "--scale" && i + 1 < argc) opt.scale = (float)atof(argv[++i]);
@@ -163,13 +168,17 @@ int main(int argc, char** argv) {
             std::string m = argv[++i];
             opt.display = m == "stretch" ? 1 : m == "fill" ? 2 : 0;
         }
+        else if (a == "--fullscreen") start_fullscreen = true;
     }
     if (const char* e = getenv("BOTW_RENDERER")) latte::select_backend(e);
     settings::set(opt, false);  // this run only; the menu saves its changes
     g_render_scale = opt.scale;
+    if (g_run_seconds > 0) LOG("time limit %d s", g_run_seconds);
+    else LOG("no time limit; close the window to quit");
     if (g_game_root.empty()) {
         if (const char* e = getenv("BOTW_GAME")) g_game_root = e;
     }
+    mods::init(g_game_root, g_user_root);
 #if defined(_WIN32)
     // Before mem::init, so the first guest touch can commit its page.
     AddVectoredExceptionHandler(1, on_vectored_exception);
@@ -190,6 +199,7 @@ int main(int argc, char** argv) {
     dispatch::init();
     // The renderer does not need the game. Bring the device and swapchain up first so a machine
     // without a dump still proves the graphics backend, then stop if the RPX is missing.
+    window::set_fullscreen(start_fullscreen);
     try {
         window::create();
     } catch (const std::exception& e) {

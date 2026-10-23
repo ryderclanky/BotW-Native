@@ -9,7 +9,8 @@ screen, the intro, the wake-up scene, and gameplay in the Shrine of Resurrection
 (about 2000–3700 draws per frame in the shrine, 22–34 AX voices). That session ran 180 seconds
 with no assert and no crash. The title screen in that run was the pulsing "(A) Start" prompt,
 the version line, and the corner icons. The Zelda logo, the TitleBG background, and the title
-music were not playing before A was pressed. See [Known issues](#known-issues).
+music were not playing before A was pressed. A fix for that is in the tree and is waiting on
+another run on the same PC. See [Known issues](#known-issues).
 
 > [!IMPORTANT]
 > This repository contains no game files, no keys, and no game code. You supply your own
@@ -81,11 +82,12 @@ job count can run the machine out of memory. The same `CMakeLists.txt` is what
 ## Run
 
 ```bash
-./build/BotWRecomp.exe --game /path/to/game --seconds 180
+./build/BotWRecomp.exe --game /path/to/game
 ```
 
-`BOTW_GAME` is the same path. `--seconds N` ends the run after N seconds. The log line is
-`time limit reached`. Saves, logs, and the shader cache go to `%APPDATA%\BotWRecomp`.
+`BOTW_GAME` is the same path. With a game loaded, the process runs until you close the window.
+`--seconds N` (N > 0) is a time limit for tests. `--seconds 0` and a negative value leave the
+run unlimited. Saves, logs, the shader cache, and mods go to `%APPDATA%\BotWRecomp`.
 `BOTW_USER_ROOT` overrides that folder.
 
 Startup commits the Cafe windows the game uses (code, heaps, MEM2, MEM1, foreground): about
@@ -93,25 +95,181 @@ Startup commits the Cafe windows the game uses (code, heaps, MEM2, MEM1, foregro
 commit. The log line is `guest commit charge 1451 MB (not resident)`.
 
 The window title is **BotW Recompiled (Windows)**. The first log line is
-`BotW Recompiled for Windows (Vulkan)`.
+`BotW Recompiled for Windows (Vulkan)`. The same control map is printed at startup.
 
 Useful flags: `--fps 30` for the game's original pace (60 is the default), `--scale 1` for
 1280×720, `--display fit|stretch|fill`, `--no-gyro`, `--mute`. `--renderer vulkan` is the
-only choice on Windows. Leave `--trace` and `--trace-hle` off for a normal run.
+only choice on Windows. `--fullscreen` starts in fullscreen (F11 still toggles it). Leave
+`--trace` and `--trace-hle` off for a normal run.
+
+## Launcher
+
+The same build also produces `build/BotWLauncher.exe`, a separate program from the game.
+From the UCRT64 shell:
+
+```bash
+./build/BotWLauncher.exe
+```
+
+Double-click `build/BotWLauncher.cmd` if you are not in that shell. It puts
+`C:\msys64\ucrt64\bin` on `PATH` so the SDL and MinGW DLLs load. Paths are remembered in
+`BotWLauncher.ini` next to the exe.
+
+Set the game folder (`code/`, `content/`, `meta/`), `BotWRecomp.exe`, and the user-data
+folder. Play launches the game with `BOTW_USER_ROOT` set to that folder, `--game`, and
+`--renderer vulkan`. Seconds `0` means no time limit; a positive number passes `--seconds`.
+The fullscreen box passes `--fullscreen`.
+
+**Controls.** Click the Keyboard or Controller cell, then press a key or a button (Backspace
+clears, Esc cancels). Reset writes the built-in map. The file is `<user data>\controls.ini`.
+The game reads it once at startup. With no file, the built-in map is unchanged (WASD, IJKL,
+E / Shift / Space / F, and the auto controller layout in the table below). Face buttons in a
+new file are Auto, so they follow that layout. Choosing a position (East, South, North, West)
+overrides Auto for that button only. Keyboard remaps, including a quick tap, use the file too.
+
+**Saves.** The game reads `<user data>\save\80000001\` (account slot 1, persistent id
+`80000001`) and `<user data>\save\common\`. Slot folders are `0`, `1`, … plus `option.sav`.
+Import save takes a folder or a `.zip` (or drop one on the window): a Cemu dump
+(`mlc01/usr/save/00050000/101c9400/user/80000001/`, and the JP `101c9300` / EU `101c9500`
+ids), the account folder itself, or a bare folder of slot directories and `option.sav`.
+The current save is copied to `<user data>\save-sets\<timestamp>-backup` first, and the
+import is kept there too. Switch to and Delete only touch those sets. Open saves folder
+opens `save\`. Import, switch, and delete do nothing while `BotWRecomp.exe` is running.
+
+Switch saves (little-endian) and saves newer than 1.5.0 (save version above `0x471B`,
+including 1.6.0 / `0x471E`) are called out and are not installed unless you confirm.
+**Migrate old save** copies `save\2147483649` (the folder an older build used for slot 1)
+onto `save\80000001`. It backs up a save that is already in `80000001` and does not delete
+or move the decimal folder. View log shows the tail of `<user data>\runtime.log`.
+
+**Mods.** The Mods list is the whole manager. Check the box to turn a mod on or off.
+Add mod, or drop a `.zip` or a folder on the window. The bottom mod in the list wins
+when two mods replace the same file. Remove asks first. Turn all mods off puts the
+game back to vanilla. Nothing in that list can be changed while `BotWRecomp.exe` is
+running. The bottom line of the window says how many mods are on and whether the
+game is running. See [Mods](#mods).
+
+## Mods
+
+Mods live in the user-data folder (`%APPDATA%\BotWRecomp`, or the folder set in the
+launcher):
+
+```text
+<user data>/mods/mods.ini
+<user data>/mods/<ModFolder>/content/    files that replace the base game's content
+<user data>/mods/<ModFolder>/aoc/        files that replace DLC content (0010/...)
+<user data>/mods/<ModFolder>/mod.ini     name and warnings, written by the launcher
+```
+
+`mods.ini` is plain text. `+ModFolder` is on, `-ModFolder` is off. A line that is
+only the folder name is on. `#` starts a comment. Later on-lines win when two mods
+contain the same path. The game reads this file at startup, logs one line per mod,
+and logs how many overlay files were opened when it exits. The base game dump is
+never modified. A file no mod replaces is read from the dump.
+
+Matching is case-insensitive, the same way the Wii U filesystem is. Directory
+listings merge mod files and folders with the dump, so a file that exists only in
+a mod still shows up.
+
+**What works.** Wii U 1.5.0 file replacements. That is a UKMM or BCML `content`
+tree (and `aoc`, once the DLC pack below is present), and a Cemu graphic pack
+that is only a `content/` or `aoc/` tree plus `rules.txt`. Resource-size edits
+that UKMM or BCML already baked into the packs are used, because those are just
+the files on disk. The launcher finds `content/` or `aoc/` up to two folders
+deep inside a zip or a dropped folder. The mod's name comes from `rules.txt`
+(`name =`) or from the folder or zip name. It is installed turned on.
+
+**What does not work.** Cemu packs that patch PowerPC code (`patch_*.asm` or any
+`.asm` file) or replace shaders. The launcher shows a red note, "This mod needs
+code patches, which this version can't run" or "This mod replaces shaders, which
+this version can't run", and does not apply those patches. A pack that is only
+patches or shaders, with no `content` or `aoc` files, is added turned off. If the
+pack also has replacement files, those files are still used and the mod is turned
+on. Graphic-pack texture rules
+(`TextureRedefine`) are called out the same way. A Switch layout (`exefs/`,
+`atmosphere/`, or `romfs/`) is added turned off with "This mod is for the Switch
+version". `.7z` archives are not unpacked; unzip them and drop the folder.
+
+**DLC.** The game is told the DLC is installed only when `AocMainField.pack` is
+visible. Put the Wii U DLC in `<game>/aoc/` (`content/0010/...` or `0010/...`)
+or in `<user data>/aoc/` with the same shape. A mod can also ship that pack
+under its own `aoc/` folder. The mount path is `/vol/aoc` plus the 16-digit add-on
+title id (`0005000c101c9400` for USA, from `meta/meta.xml`). Files inside the
+pack's `content` directory are opened directly under that path (`.../0010/...`),
+which is how Cemu mounts add-on content. A partial `aoc` folder that does not
+contain `AocMainField.pack` does not mark the DLC installed.
 
 ## Controls
 
-On this build, **E = A**, **Left Shift = B**, and **Enter = Plus**. A full keyboard and
-gamepad map for every GamePad button and both sticks is coming in the next update.
+Keyboard and controller are read together. Stick axes are -1..1 with +Y up. The controller
+stick uses a radial deadzone of 0.15, rescaled so the edge of the deadzone is still zero.
+ZL and ZR follow the analog triggers once they pass about a quarter of the pull.
 
-F1 opens the settings menu. F11 toggles fullscreen.
+The default face mapping is **Auto**. It follows the labels SDL reports for that pad, so the
+Wii U A button is the button labeled A or Cross:
+
+| GamePad | Keyboard | Auto, Xbox / PlayStation / standard | Auto, Switch Pro, Joy-Con, 8BitDo in Switch mode | Auto, GameCube |
+| --- | --- | --- | --- | --- |
+| A | E | South (A / Cross) | East (A) | South (A) |
+| B | Shift | East (B / Circle) | South (B) | West (B) |
+| X | Space | West (X / Square) | North (X) | East (X) |
+| Y | F | North (Y / Triangle) | West (Y) | North (Y) |
+| L | 1 | Left shoulder | Left shoulder | Left shoulder |
+| R | 3 | Right shoulder | Right shoulder | Right shoulder |
+| ZL | Q | Left trigger, past about a quarter pull | Left trigger | Left trigger |
+| ZR | R | Right trigger, past about a quarter pull | Right trigger | Right trigger |
+| Plus | Enter | Start | Plus | Start |
+| Minus | Tab | Back | Minus | (none on a real cube pad) |
+| D-pad | Arrow keys | D-pad | D-pad | D-pad |
+| Left stick | W A S D | Left stick | Left stick | Stick |
+| Right stick | I J K L (J left, L right, I up, K down) | Right stick | Right stick | C-stick |
+| Left stick click | C | Left stick click | Left stick click | (none) |
+| Right stick click | V | Right stick click | Right stick click | (none) |
+| Home | H, or the Home key | Guide | Home | (none) |
+| Sync | G | Extra button, when the pad has one | Sync, when the pad has one | (none) |
+| TV | T | Share / Capture | Capture | (none) |
+
+The in-game menu can force one layout for every pad. **Auto (per controller)** is
+`layout=-1`. **A = right (Circle / Xbox B)** is `layout=0` (Nintendo positions on every
+pad). **A = bottom (Cross / Xbox A)** is `layout=1`. A `settings.ini` that already has
+`layout=0` keeps Nintendo positions.
+
+Pads already connected at launch are opened after the mappings load. A pad plugged in
+later is opened from the connect event, and unplugging closes it. When several pads are
+connected, the one used most recently drives the game. Plugging in a new pad does not
+steal control from a pad that has already been used. Keyboard input keeps working at the
+same time. Gyro is enabled on the active pad when that pad has a gyro and an accelerometer
+(DualShock 4, DualSense, Switch Pro, and Joy-Con pairs that expose them). Rumble goes to
+the active pad only.
+
+Connect and disconnect lines name the controller and the type, for example
+`controller connected: DualSense Wireless Controller (DualSense, gyro, A = bottom)`.
+Switching pads logs `controller active: ...`.
+
+Mappings come from SDL's built-in list, then the bundled `gamecontrollerdb.txt` copied
+next to the executable (the community [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB),
+zlib license, Copyright (C) 1997-2025 Sam Lantinga, retrieved 2026-10-22 from commit
+`ff333823a85a`). A `gamecontrollerdb.txt` in the user folder (`%APPDATA%\BotWRecomp`, or
+`BOTW_USER_ROOT`) is loaded after that. `SDL_GAMECONTROLLERCONFIG_FILE` points at another
+file. `SDL_GAMECONTROLLERCONFIG` is applied by SDL at startup and overrides the files.
+
+On Windows, PlayStation, Switch, Joy-Con, and 8BitDo pads are opened through SDL's HIDAPI
+drivers. Xbox pads stay on RawInput correlated with XInput so each pad is opened once.
+DirectInput stays on for other pads. Those hints are set before SDL starts. This environment
+cannot see a physical controller; the table above is what the code maps, and it still needs
+a pass on real hardware.
+
+F1, both stick clicks, or the touchpad opens the settings menu. Escape closes it. While the
+menu is open the game sees no buttons. F11 toggles fullscreen. Close the window to quit.
 
 ## Environment variables
 
 | Variable | What it does |
 | --- | --- |
 | `BOTW_GAME` | Folder that contains `code/`, `content/`, and `meta/`. Same as `--game`. |
-| `BOTW_USER_ROOT` | Saves, `settings.ini`, `runtime.log`, and the shader cache. Default is `%APPDATA%\BotWRecomp`. |
+| `BOTW_USER_ROOT` | Saves, `settings.ini`, `runtime.log`, the shader cache, `mods/`, and an optional `gamecontrollerdb.txt`. Default is `%APPDATA%\BotWRecomp`. |
+| `SDL_GAMECONTROLLERCONFIG` | One extra SDL controller mapping string. Applied by SDL at startup, ahead of the bundled database. |
+| `SDL_GAMECONTROLLERCONFIG_FILE` | Path to an extra `gamecontrollerdb.txt`, loaded after the user folder's file. |
 | `BOTW_DIAG` | Set to `1` for three extra log lines every 10 seconds: draws per color target and draws the command processor dropped, AX voices in the mixer and the peak sample sent to the speakers, and how often `VPADRead` runs. The GamePad sampling callback runs at 200 Hz on its own thread. |
 | `BOTW_RENDERER` | Renderer name. On Windows the build only includes Vulkan. |
 | `BOTW_WATCH` | Debug watch on a guest address. Leave it unset for play. |
@@ -120,7 +278,8 @@ F1 opens the settings menu. F11 toggles fullscreen.
 
 - **Title logo, TitleBG, and title music.** Before A is pressed, the verified run drew the
   prompt and stayed silent (5 draws per frame). Gameplay after A is what the 60 fps shrine
-  result covers. That fix is not in this branch.
+  result covers. The frame-span cap that should let the logo, background, and music start is
+  pending verification on the RTX 5060.
 - **Title-to-intro hitch.** One slow frame of about 2 seconds, a CPU texture untile, then the
   game recovered. It did not crash.
 - **First-run shaders.** Pipelines compile on first use, so the first time through a scene
@@ -128,7 +287,16 @@ F1 opens the settings menu. F11 toggles fullscreen.
 - **A few cutscenes stay at 30 fps** on purpose. The shrine gameplay in the verified run was
   60 fps.
 - **Beyond the shrine.** The verified session is the opening through the Shrine of
-  Resurrection. A long open-world session is not part of that result. DLC is untested.
+  Resurrection. A long open-world session is not part of that result. The mod
+  overlay and DLC mount are covered by the portable tests in `BotWModTests`.
+  They have not been played through on the RTX 5060. DLC stays "not installed"
+  until `AocMainField.pack` is in the game `aoc` folder, `<user data>/aoc`, or
+  an enabled mod.
+- **Dialogue and controllers.** Talking to the Old Man on the Great Plateau stopped accepting
+  keyboard input once the text box appeared (E for A, Left Shift for B, from the build that
+  was played). The controller path was not tried. The fix is in this branch and has not been
+  played on the RTX 5060. Hotplug, family face buttons, gyro, and advancing that conversation
+  from a real pad are untested here: this environment has no controller.
 - **Linux.** The Vulkan backend configures and compiles. Without game files the process
   brings up a device and swapchain, presents one empty frame, and exits. A full Linux
   play-through is not what was verified.

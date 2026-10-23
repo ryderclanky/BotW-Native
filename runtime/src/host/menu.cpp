@@ -43,7 +43,13 @@ void step(Settings& s, int row, int dir) {
         case kFilter: s.filter = wrap(s.filter + dir, 4); break;
         case kGyro: s.gyro = !s.gyro; break;
         case kRumble: s.rumble = !s.rumble; break;
-        case kLayout: s.layout = !s.layout; break;
+        case kLayout: {
+            // -1 auto, 0 Nintendo positions, 1 Xbox/PlayStation labels.
+            if (s.layout < 0) s.layout = dir > 0 ? 0 : 1;
+            else if (s.layout == 0) s.layout = dir > 0 ? 1 : -1;
+            else s.layout = dir > 0 ? -1 : 0;
+            break;
+        }
         case kTouch: s.touch = wrap(s.touch + dir, 3), s.touch_hidden = false; break;
         case kShowFps: s.show_fps = !s.show_fps; break;
         case kVolume: s.volume = std::clamp(s.volume + dir * 10, 0, 100); break;
@@ -145,7 +151,9 @@ View view() {
     v.rows[kFilter] = {"Upscale filter", kFilters[std::clamp(s.filter, 0, 3)]};
     v.rows[kGyro] = {"Gyro aiming", s.gyro ? "On" : "Off"};
     v.rows[kRumble] = {"Rumble", s.rumble ? "On" : "Off"};
-    v.rows[kLayout] = {"Buttons", s.layout ? "A = bottom (Cross / Xbox A)" : "A = right (Circle / Xbox B)"};
+    v.rows[kLayout] = {"Buttons", s.layout < 0 ? "Auto (per controller)"
+                                       : s.layout > 0 ? "A = bottom (Cross / Xbox A)"
+                                                      : "A = right (Circle / Xbox B)"};
     v.rows[kTouch] = {"Touch controls", s.touch == 1 ? "On" : s.touch == 2 ? "Off" : "Auto (no controller)"};
     v.rows[kShowFps] = {"FPS counter", s.show_fps ? "On" : "Off"};
     snprintf(b, sizeof b, "%d%%", s.volume);

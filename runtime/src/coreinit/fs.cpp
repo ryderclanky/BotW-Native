@@ -1,5 +1,6 @@
 // coreinit FS (synchronous API) and nn_save. Guest paths: /vol/content -> <game>/content,
-// /vol/code -> <game>/code, /vol/save -> <user>/save. Handles index a host-side table.
+// /vol/code -> <game>/code, /vol/save -> <user>/save, /vol/aoc<titleid> -> DLC content.
+// Enabled mods overlay content and aoc (runtime/src/coreinit/mods.cpp). The game dump is not written.
 #include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
@@ -10,10 +11,12 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <mutex>
 #include <string>
 #include <vector>
 
+#include "coreinit/mods.h"
 #include "diag.h"
 #include "hle.h"
 #include "os.h"
@@ -33,6 +36,9 @@ constexpr uint32_t FLAG_DIR = 0x80000000u, FLAG_FILE = 0x01000000u;
 struct Handle {
     FILE* f = nullptr;
     DIR* d = nullptr;
+    std::vector<mods::DirItem> items;
+    size_t item_at = 0;
+    bool listed = false;
     std::string host;
 };
 std::mutex g_fs_lock;
@@ -84,18 +90,57 @@ std::string host_path_exact(std::string p);
 std::string host_path(std::string p) { return botw_ios_fix_case(host_path_exact(std::move(p))); }
 #define host_path host_path_exact
 #endif
-std::string host_path(std::string p) {
+std::string abs_guest(std::string p) {
+    for (char& ch : p)
+        if (ch == '\\') ch = '/';
     if (p.empty() || p[0] != '/') p = g_cwd + "/" + p;
-    // normalise duplicate slashes
+    // Resolve '.' and '..' so a guest path cannot escape the volume it names.
+    std::vector<std::string> parts;
+    std::string cur;
+    auto flush = [&] {
+        if (cur.empty() || cur == ".") {
+            cur.clear();
+            return;
+        }
+        if (cur == "..") {
+            if (!parts.empty()) parts.pop_back();
+        } else {
+            parts.push_back(cur);
+        }
+        cur.clear();
+    };
+    for (char ch : p) {
+        if (ch == '/') flush();
+        else cur.push_back(ch);
+    }
+    flush();
     std::string n;
-    for (char ch : p)
-        if (!(ch == '/' && !n.empty() && n.back() == '/')) n += ch;
+    for (const auto& part : parts) {
+        n += '/';
+        n += part;
+    }
+    return n.empty() ? "/" : n;
+}
+
+std::string host_path(std::string p) {
+    std::string n = abs_guest(std::move(p));
     auto starts = [&](const char* pre) { return n.compare(0, strlen(pre), pre) == 0; };
     if (starts("/vol/content")) return native_path(g_game_root + "/content" + n.substr(12));
     if (starts("/vol/code")) return native_path(g_game_root + "/code" + n.substr(9));
     if (starts("/vol/meta")) return native_path(g_game_root + "/meta" + n.substr(9));
     if (starts("/vol/save")) return native_path(g_user_root + "/save" + n.substr(9));
-    if (starts("/vol/aoc")) return native_path(g_game_root + "/aoc" + n.substr(8));
+    if (starts("/vol/aoc")) {
+        // /vol/aoc/<rel> or /vol/aoc<16 hex title id>/<rel>. Reads go through mods::query, which
+        // also understands an aoc/content layout. This fallback is the unsuffixed game/aoc folder.
+        size_t i = 8;
+        if (n.size() >= 24) {
+            bool hex = true;
+            for (size_t k = 8; k < 24 && hex; k++)
+                if (!std::isxdigit(static_cast<unsigned char>(n[k]))) hex = false;
+            if (hex && (n.size() == 24 || n[24] == '/')) i = 24;
+        }
+        return native_path(g_game_root + "/aoc" + n.substr(i));
+    }
     return native_path(g_user_root + "/unknown_volume" + n);
 }
 #if TARGET_OS_IOS
@@ -124,7 +169,7 @@ void mkdirs(const std::string& p) {
 
 uint32_t add_handle(Handle h) {
     for (size_t i = 1; i < g_handles.size(); i++)
-        if (!g_handles[i].f && !g_handles[i].d) {
+        if (!g_handles[i].f && !g_handles[i].d && !g_handles[i].listed) {
             g_handles[i] = h;
             return (uint32_t)i;
         }
@@ -186,30 +231,54 @@ int32_t fail(PPCContext* c, int32_t err, uint32_t mask, const char* what, const 
     return err;
 }
 
-int32_t open_file(PPCContext* c, const std::string& gpath, const char* mode, uint32_t handle_out, uint32_t mask) {
-    std::string hp = host_path(gpath);
-    HostInfo info = host_info(hp);
+int32_t open_file(PPCContext* c, const std::string& raw, const char* mode, uint32_t handle_out, uint32_t mask) {
+    std::string gpath = abs_guest(raw);
     std::string m = mode ? mode : "";
     bool reading = m.find('r') != std::string::npos && m.find('+') == std::string::npos && m.find('w') == std::string::npos &&
                    m.find('a') == std::string::npos;
-    // A 32-bit stat fails with EOVERFLOW on a large file. fopen can still open it.
-    if (!info.ok && reading && info.err == EOVERFLOW) {
-        FILE* probe = fopen(hp.c_str(), "rb");
-        if (probe) {
-            fclose(probe);
-            info.ok = true;
-            info.dir = false;
-            diag_fs(gpath.c_str(), "FS stat EOVERFLOW on %s, fopen ok", hp.c_str());
+    if (mods::read_only_volume(gpath) && !reading) {
+        LOG("FS write blocked on %s (the game dump and mods are read-only)", gpath.c_str());
+        return fail(c, FS_PERMISSION, mask, "open", gpath);
+    }
+    std::string hp;
+    HostInfo info;
+    bool overlay = false;
+    mods::Query q = mods::query(gpath);
+    if (q.kind != mods::Query::Kind::Other) {
+        if (q.kind == mods::Query::Kind::Dir) return fail(c, FS_NOT_FILE, mask, "open", gpath);
+        if (q.kind != mods::Query::Kind::File) {
+            diag_fs(gpath.c_str(), "FS open miss %s", gpath.c_str());
+            return fail(c, FS_NOT_FOUND, mask, "open", gpath);
         }
-    }
-    if (info.ok && info.dir) return fail(c, FS_NOT_FILE, mask, "open", gpath);
-    if (!info.ok && reading) {
-        diag_fs(gpath.c_str(), "FS open miss %s host %s errno %d", gpath.c_str(), hp.c_str(), info.err);
-        return fail(c, FS_NOT_FOUND, mask, "open", gpath);
-    }
-    if (m.find('w') != std::string::npos || m.find('a') != std::string::npos) {
-        size_t s = hp.find_last_of("/\\");
-        if (s != std::string::npos) mkdirs(hp.substr(0, s));
+        hp = q.host;
+        info.ok = true;
+        info.size = q.size;
+        overlay = q.overlay;
+#if TARGET_OS_IOS
+        hp = botw_ios_fix_case(hp);
+#endif
+    } else {
+        hp = host_path(gpath);
+        info = host_info(hp);
+        // A 32-bit stat fails with EOVERFLOW on a large file. fopen can still open it.
+        if (!info.ok && reading && info.err == EOVERFLOW) {
+            FILE* probe = fopen(hp.c_str(), "rb");
+            if (probe) {
+                fclose(probe);
+                info.ok = true;
+                info.dir = false;
+                diag_fs(gpath.c_str(), "FS stat EOVERFLOW on %s, fopen ok", hp.c_str());
+            }
+        }
+        if (info.ok && info.dir) return fail(c, FS_NOT_FILE, mask, "open", gpath);
+        if (!info.ok && reading) {
+            diag_fs(gpath.c_str(), "FS open miss %s host %s errno %d", gpath.c_str(), hp.c_str(), info.err);
+            return fail(c, FS_NOT_FOUND, mask, "open", gpath);
+        }
+        if (m.find('w') != std::string::npos || m.find('a') != std::string::npos) {
+            size_t s = hp.find_last_of("/\\");
+            if (s != std::string::npos) mkdirs(hp.substr(0, s));
+        }
     }
     std::string hm;
     for (char ch : m)
@@ -217,16 +286,37 @@ int32_t open_file(PPCContext* c, const std::string& gpath, const char* mode, uin
     hm += 'b';
     FILE* f = fopen(hp.c_str(), hm.c_str());
     if (!f) return fail(c, errno == ENOENT ? FS_NOT_FOUND : FS_PERMISSION, mask, "open", gpath);
+    if (overlay) mods::note_opened(gpath);
+    Handle opened;
+    opened.f = f;
+    opened.host = hp;
     std::lock_guard<std::mutex> l(g_fs_lock);
-    uint32_t h = add_handle({f, nullptr, hp});
+    uint32_t h = add_handle(std::move(opened));
     mem::w32(handle_out, h);
-    diag_fs(gpath.c_str(), "FS open %s (%s) host %s size %llu -> %u", gpath.c_str(), mode ? mode : "", hp.c_str(),
-            (unsigned long long)info.size, h);
+    diag_fs(gpath.c_str(), "FS open %s (%s) host %s size %llu%s -> %u", gpath.c_str(), mode ? mode : "", hp.c_str(),
+            (unsigned long long)info.size, overlay ? " overlay" : "", h);
     TRACE("FS open %s (%s) -> %u", gpath.c_str(), m.c_str(), h);
     return FS_OK;
 }
 
-int32_t open_dir(PPCContext* c, const std::string& gpath, uint32_t out, uint32_t mask) {
+int32_t open_dir(PPCContext* c, const std::string& raw, uint32_t out, uint32_t mask) {
+    std::string gpath = abs_guest(raw);
+    std::vector<mods::DirItem> items;
+    mods::ListStatus listed = mods::list_dir(gpath, items);
+    if (listed != mods::ListStatus::NotVolume) {
+        if (listed != mods::ListStatus::Ok) {
+            diag_fs(gpath.c_str(), "FS opendir miss %s", gpath.c_str());
+            return fail(c, FS_NOT_FOUND, mask, "opendir", gpath);
+        }
+        diag_fs(gpath.c_str(), "FS opendir merged %s (%zu entries)", gpath.c_str(), items.size());
+        Handle opened;
+        opened.items = std::move(items);
+        opened.listed = true;
+        opened.host = gpath;
+        std::lock_guard<std::mutex> l(g_fs_lock);
+        mem::w32(out, add_handle(std::move(opened)));
+        return FS_OK;
+    }
     std::string hp = host_path(gpath);
     DIR* d = opendir(hp.c_str());
     if (!d) {
@@ -234,12 +324,28 @@ int32_t open_dir(PPCContext* c, const std::string& gpath, uint32_t out, uint32_t
         return fail(c, FS_NOT_FOUND, mask, "opendir", gpath);
     }
     diag_fs(gpath.c_str(), "FS opendir %s host %s", gpath.c_str(), hp.c_str());
+    Handle opened;
+    opened.d = d;
+    opened.host = hp;
     std::lock_guard<std::mutex> l(g_fs_lock);
-    mem::w32(out, add_handle({nullptr, d, hp}));
+    mem::w32(out, add_handle(std::move(opened)));
     return FS_OK;
 }
 
-int32_t get_stat(PPCContext* c, const std::string& gpath, uint32_t out, uint32_t mask) {
+int32_t get_stat(PPCContext* c, const std::string& raw, uint32_t out, uint32_t mask) {
+    std::string gpath = abs_guest(raw);
+    mods::Query q = mods::query(gpath);
+    if (q.kind != mods::Query::Kind::Other) {
+        if (q.kind == mods::Query::Kind::Missing) {
+            diag_fs(gpath.c_str(), "FS stat miss %s", gpath.c_str());
+            return fail(c, FS_NOT_FOUND, mask, "stat", gpath);
+        }
+        bool dir = q.kind == mods::Query::Kind::Dir;
+        fill_stat(out, dir, q.size);
+        diag_fs(gpath.c_str(), "FS stat %s host %s %s size %llu%s", gpath.c_str(), q.host.c_str(), dir ? "dir" : "file",
+                (unsigned long long)q.size, q.overlay ? " overlay" : "");
+        return FS_OK;
+    }
     std::string hp = host_path(gpath);
     HostInfo info = host_info(hp);
     if (!info.ok) {
@@ -253,7 +359,14 @@ int32_t get_stat(PPCContext* c, const std::string& gpath, uint32_t out, uint32_t
 }
 
 std::string save_path(uint32_t account, const char* path) {
-    std::string base = account == 0xFF ? "/vol/save/common" : "/vol/save/" + std::to_string(0x80000000u + account);
+    // nn_save's account argument is a slot (1 = nn::act slot 1, 0xFF = common), not a decimal id.
+    // Slot 1 is persistent id 0x80000001. Wii U and Cemu name the directory with that id in hex,
+    // which is the folder SAVEInit creates. std::to_string would print 2147483649 and miss the files.
+    account &= 0xFFu;
+    char folder[16];
+    if (account == 0xFF) snprintf(folder, sizeof folder, "common");
+    else snprintf(folder, sizeof folder, "%08x", 0x80000000u + account);
+    std::string base = std::string("/vol/save/") + folder;
     std::string p = path ? path : "";
     if (!p.empty() && p[0] != '/') p = "/" + p;
     return base + p;
@@ -371,8 +484,21 @@ HLE_EXPORT(coreinit, FSReadDir) {
     uint32_t out = ARG(3);
     std::lock_guard<std::mutex> l(g_fs_lock);
     Handle* h = get(ARG(2));
-    if (!h || !h->d) {
+    if (!h || (!h->d && !h->listed)) {
         RET(FS_FATAL);
+        return;
+    }
+    if (h->listed) {
+        if (h->item_at >= h->items.size()) {
+            RET(FS_END);
+            return;
+        }
+        const mods::DirItem& e = h->items[h->item_at++];
+        fill_stat(out, e.dir, e.size);
+        mem::commit(out + 0x64, 0x80, true);
+        memset(mem::host(out + 0x64), 0, 0x80);
+        strncpy((char*)mem::host(out + 0x64), e.name.c_str(), 0x7F);
+        RET(0);
         return;
     }
     for (;;) {
@@ -400,16 +526,22 @@ HLE_EXPORT(coreinit, FSReadDir) {
 HLE_EXPORT(coreinit, FSCloseDir) {
     std::lock_guard<std::mutex> l(g_fs_lock);
     Handle* h = get(ARG(2));
-    if (h && h->d) {
-        closedir(h->d);
+    if (h && (h->d || h->listed)) {
+        if (h->d) closedir(h->d);
         *h = Handle{};
     }
     RET(0);
 }
 HLE_EXPORT(coreinit, FSMakeDir) {
-    std::string hp = host_path(mem::str(ARG(2)));
+    std::string gpath = abs_guest(mem::str(ARG(2)));
+    if (mods::read_only_volume(gpath)) {
+        LOG("FS mkdir blocked on %s (the game dump and mods are read-only)", gpath.c_str());
+        RET(fail(c, FS_PERMISSION, ARG(3), "mkdir", gpath));
+        return;
+    }
+    std::string hp = host_path(gpath);
     if (host_info(hp).ok) {
-        RET(fail(c, FS_EXISTS, ARG(3), "mkdir", mem::str(ARG(2))));
+        RET(fail(c, FS_EXISTS, ARG(3), "mkdir", gpath));
         return;
     }
     mkdirs(hp);
@@ -455,7 +587,12 @@ HLE_EXPORT(nn_save, SAVEMakeDir) {
 }
 
 // Remove a file or an empty directory.
-static int32_t remove_path(PPCContext* c, const std::string& gpath, uint32_t mask) {
+static int32_t remove_path(PPCContext* c, const std::string& raw, uint32_t mask) {
+    std::string gpath = abs_guest(raw);
+    if (mods::read_only_volume(gpath)) {
+        LOG("FS remove blocked on %s (the game dump and mods are read-only)", gpath.c_str());
+        return fail(c, FS_PERMISSION, mask, "remove", gpath);
+    }
     std::string hp = host_path(gpath);
     HostInfo info = host_info(hp);
     if (!info.ok) return fail(c, FS_NOT_FOUND, mask, "remove", gpath);

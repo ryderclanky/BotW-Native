@@ -1,7 +1,10 @@
 // proc_ui, sysapp, nn_act, nn_boss, nn_nfp, nn_aoc: the app is always in the foreground, one local
-// account (slot 1), no network services, no amiibo, no DLC.
+// account (slot 1), no network services, no amiibo. DLC is reported only when AocMainField.pack
+// is visible through the mod overlay or a user/game aoc folder (coreinit/mods.cpp).
 #include <algorithm>
+#include <cstring>
 
+#include "../coreinit/mods.h"
 #include "../hle.h"
 #include "../os.h"
 
@@ -101,24 +104,69 @@ HLE_EXPORT(nn_nfp, InitializeAmiiboSettingsArgsIn__Q2_2nn3nfpFPQ3_2nn3nfp20Amiib
 }
 HLE_EXPORT(nn_nfp, SwitchToAmiiboSettings__Q2_2nn3nfpFRCQ3_2nn3nfp20AmiiboSettingsArgsInPCcUi) { RET(kResultOk); }
 
-// ---- nn::aoc (DLC): no add-on content installed ---------------------------------------------------
+// ---- nn::aoc (DLC) -------------------------------------------------------------------------------
+// AOCTitle matches Cemu: titleId u64 at 0, groupId u32 at 8, titleVersion u16 at 12, path[88] at
+// 0x0E, then 2 bytes of padding. sizeof is 0x68. The mount path is /vol/aoc<16 lowercase hex>,
+// and the content directory (0010/...) is mounted there, the same way Cemu mounts AOC "content".
 HLE_EXPORT(nn_aoc, AOC_Initialize) { RET(0); }
 HLE_EXPORT(nn_aoc, AOC_DebugRealDeviceAccess) { RET(0); }
 HLE_EXPORT(nn_aoc, AOC_CalculateWorkBufferSize) { RET(0x80 + std::min(ARG(0), 256u) * 0x61); }
 // AOC_ListTitle(u32* countOut, AOCTitle* list, maxCount, work, workSize)
 HLE_EXPORT(nn_aoc, AOC_ListTitle) {
-    if (ARG(0)) mem::w32(ARG(0), 0);
+    uint32_t count_out = ARG(0);
+    uint32_t list = ARG(1);
+    uint32_t max_count = ARG(2);
+    if (count_out && mem::commit(count_out, 4, true)) mem::w32(count_out, 0);
+    static int logged = 0;
+    bool ready = mods::dlc_ready();
+    if (logged++ == 0) {
+        if (ready) LOG("AOC_ListTitle: DLC %s", mods::aoc_mount_path().c_str());
+        else LOG("AOC_ListTitle: DLC not installed");
+    }
+    if (!ready || !max_count || !list || !mem::commit(list, 0x68, true)) {
+        RET(0);
+        return;
+    }
+    memset(mem::host(list), 0, 0x68);
+    mem::w64(list, mods::aoc_title_id());
+    mem::w32(list + 8, 0);
+    mem::w16(list + 12, 0);
+    std::string path = mods::aoc_mount_path();
+    strncpy((char*)mem::host(list + 0x0E), path.c_str(), 87);
+    if (count_out) mem::w32(count_out, 1);
     RET(0);
 }
 // AOC_OpenTitle(char* pathOut, AOCTitle* title, work, workSize): path is at AOCTitle+0x0E
 HLE_EXPORT(nn_aoc, AOC_OpenTitle) {
-    strcpy((char*)mem::host(ARG(0)), mem::str(ARG(1) + 0x0E));
+    if (!ARG(0) || !mem::commit(ARG(0), 0x80, true)) {
+        RET(0);
+        return;
+    }
+    memset(mem::host(ARG(0)), 0, 0x80);
+    const char* src = "";
+    if (ARG(1) && mem::commit(ARG(1) + 0x0E, 88, false)) src = mem::str(ARG(1) + 0x0E);
+    if (!src) src = "";
+    strncpy((char*)mem::host(ARG(0)), src, 0x7F);
     RET(0);
 }
 HLE_EXPORT(nn_aoc, AOC_CloseTitle) { RET(0); }
-// AOC_GetPurchaseInfo(u32* out, u64 titleId (r5:r6), u16* ids, count, work, workSize): nothing owned
+// AOC_GetPurchaseInfo(u32* out, u64 titleId (r5:r6), u16* ids, count, work, workSize)
 HLE_EXPORT(nn_aoc, AOC_GetPurchaseInfo) {
-    for (uint32_t i = 0; i < ARG(5); i++) mem::w32(ARG(0) + i * 4, 0);
+    uint32_t out = ARG(0);
+    uint32_t ids = ARG(4);
+    uint32_t count = ARG(5);
+    if (count > 256) count = 256;
+    static int logged = 0;
+    if (logged++ == 0) LOG("AOC_GetPurchaseInfo: %u entries, DLC %s", count, mods::dlc_ready() ? "on" : "off");
+    if (!out || !count || !mem::commit(out, count * 4, true)) {
+        RET(0);
+        return;
+    }
+    bool ids_ok = ids && mem::commit(ids, count * 2, false);
+    for (uint32_t i = 0; i < count; i++) {
+        uint16_t id = ids_ok ? mem::r16(ids + i * 2) : 0;
+        mem::w32(out + i * 4, mods::owns_content(id) ? 1u : 0u);
+    }
     RET(0);
 }
 
