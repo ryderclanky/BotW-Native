@@ -14,10 +14,35 @@ namespace menu {
 namespace {
 std::mutex g_lock;
 std::atomic<bool> g_open{false};
-int g_cursor = 0;
+int g_cursor = 0;  // selected row inside the current tab (the last row of every tab is Close)
+int g_tab = 0;
 
 enum RowId { kFps, kScale, kDisplay, kFilter, kGyro, kRumble, kLayout, kTouch, kShowFps, kVolume, kClose, kRows };
 const float kScales[] = {0, 0.5f, 0.75f, 1, 1.5f, 2, 2.5f, 3};  // 0 = fit the display
+
+// Tabs. Every setting of the previous flat list is in exactly one tab; the order inside a tab follows
+// the order of the old list. Close is appended to every tab.
+enum TabId { kTabGraphics, kTabControls, kTabAudio, kTabAbout, kTabs };
+const char* kTabNames[kTabs] = {"Graphics", "Controls", "Audio", "About"};
+const std::vector<int>& tab_rows(int t) {
+    static const std::vector<int> graphics = {kFps, kScale, kDisplay, kFilter, kShowFps};
+    static const std::vector<int> controls = {kGyro, kRumble, kLayout, kTouch};
+    static const std::vector<int> audio = {kVolume};
+    static const std::vector<int> about;
+    switch (t) {
+        case kTabGraphics: return graphics;
+        case kTabControls: return controls;
+        case kTabAudio: return audio;
+        default: return about;
+    }
+}
+// Row id for a selected position in a tab; the position after the last setting is Close.
+int row_id(int t, int cursor) {
+    const std::vector<int>& r = tab_rows(t);
+    return cursor >= 0 && cursor < (int)r.size() ? r[cursor] : (int)kClose;
+}
+int row_count(int t) { return (int)tab_rows(t).size() + 1; }
+
 const char* kDisplays[] = {"Fit 16:9", "Stretch", "Fill (crop)"};
 const char* kFilters[] = {"Bilinear", "Bicubic", "Hermite", "Nearest"};
 
@@ -100,14 +125,31 @@ void close() { g_open = false; }
 
 void move(int dy) {
     std::lock_guard<std::mutex> l(g_lock);
-    g_cursor = (g_cursor + dy + kRows) % kRows;
+    const int n = row_count(g_tab);
+    g_cursor = ((g_cursor + dy) % n + n) % n;
+}
+
+void select_tab(int i) {
+    std::lock_guard<std::mutex> l(g_lock);
+    if (i < 0 || i >= kTabs) return;
+    if (i != g_tab) g_cursor = 0;
+    g_tab = i;
+}
+
+void tab(int dir) {
+    int t;
+    {
+        std::lock_guard<std::mutex> l(g_lock);
+        t = g_tab;
+    }
+    select_tab(((t + dir) % kTabs + kTabs) % kTabs);
 }
 
 void change(int dir) {
     int row;
     {
         std::lock_guard<std::mutex> l(g_lock);
-        row = g_cursor;
+        row = row_id(g_tab, g_cursor);
     }
     if (row == kClose) return;
     Settings s = settings::get();
@@ -119,14 +161,17 @@ void activate() {
     int row;
     {
         std::lock_guard<std::mutex> l(g_lock);
-        row = g_cursor;
+        row = row_id(g_tab, g_cursor);
     }
     if (row == kClose) close();
     else change(+1);
 }
 
 void click(int row, int dir) {
-    if (row < 0 || row >= kRows) return;
+    {
+        std::lock_guard<std::mutex> l(g_lock);
+        if (row < 0 || row >= row_count(g_tab)) return;
+    }
     {
         std::lock_guard<std::mutex> l(g_lock);
         g_cursor = row;
@@ -138,29 +183,51 @@ void click(int row, int dir) {
 View view() {
     View v;
     v.open = g_open;
+    int tab_now, cursor;
     {
         std::lock_guard<std::mutex> l(g_lock);
-        v.cursor = g_cursor;
+        tab_now = g_tab;
+        cursor = g_cursor;
     }
+    v.tab = tab_now;
+    v.cursor = cursor;
+    for (const char* n : kTabNames) v.tabs.push_back(n);
     Settings s = settings::get();
-    char b[64];
-    v.rows.resize(kRows);
-    v.rows[kFps] = {"Frame rate", s.fps >= 60 ? "60 fps" : "30 fps (original)"};
-    v.rows[kScale] = {"Resolution", scale_text(s.scale)};
-    v.rows[kDisplay] = {"Aspect", kDisplays[std::clamp(s.display, 0, 2)]};
-    v.rows[kFilter] = {"Upscale filter", kFilters[std::clamp(s.filter, 0, 3)]};
-    v.rows[kGyro] = {"Gyro aiming", s.gyro ? "On" : "Off"};
-    v.rows[kRumble] = {"Rumble", s.rumble ? "On" : "Off"};
-    v.rows[kLayout] = {"Buttons", s.layout < 0 ? "Auto (per controller)"
-                                       : s.layout > 0 ? "A = bottom (Cross / Xbox A)"
-                                                      : "A = right (Circle / Xbox B)"};
-    v.rows[kTouch] = {"Touch controls", s.touch == 1 ? "On" : s.touch == 2 ? "Off" : "Auto (no controller)"};
-    v.rows[kShowFps] = {"FPS counter", s.show_fps ? "On" : "Off"};
+    char b[96];
+    Row all[kRows];
+    all[kFps] = {"Frame rate", s.fps >= 60 ? "60 fps" : "30 fps (original)"};
+    all[kScale] = {"Resolution", scale_text(s.scale)};
+    all[kDisplay] = {"Aspect", kDisplays[std::clamp(s.display, 0, 2)]};
+    all[kFilter] = {"Upscale filter", kFilters[std::clamp(s.filter, 0, 3)]};
+    all[kGyro] = {"Gyro aiming", s.gyro ? "On" : "Off"};
+    all[kRumble] = {"Rumble", s.rumble ? "On" : "Off"};
+    all[kLayout] = {"Buttons", s.layout < 0 ? "Auto (per controller)"
+                                     : s.layout > 0 ? "A = bottom (Cross / Xbox A)"
+                                                    : "A = right (Circle / Xbox B)"};
+    all[kTouch] = {"Touch controls", s.touch == 1 ? "On" : s.touch == 2 ? "Off" : "Auto (no controller)"};
+    all[kShowFps] = {"FPS counter", s.show_fps ? "On" : "Off"};
     snprintf(b, sizeof b, "%d%%", s.volume);
-    v.rows[kVolume] = {"Volume", b};
-    v.rows[kClose] = {"Close", "", true};
-    snprintf(b, sizeof b, "Rendering at %gx now; resolution changes apply after a restart.", g_render_scale);
-    v.note = b;
+    all[kVolume] = {"Volume", b};
+    all[kClose] = {"Close", "", true};
+    for (int id : tab_rows(tab_now)) v.rows.push_back(all[id]);
+    v.rows.push_back(all[kClose]);
+    if (tab_now == kTabGraphics) {
+        snprintf(b, sizeof b, "Rendering at %gx now; resolution changes apply after a restart.", g_render_scale);
+        v.note = b;
+    } else if (tab_now == kTabControls) {
+        v.note = "Controls changes apply at once and are saved to settings.ini.";
+    } else if (tab_now == kTabAbout) {
+        v.text = {
+            "BotW-Native",
+            "Breath of the Wild (Wii U, v1.5.0) statically recompiled to run natively, with a Vulkan backend on Windows.",
+            "No game assets are included. You need your own copy of the game.",
+            "",
+            "Based on BotW Recompiled by Ishaan Kalra: github.com/IshaanKalra2103/BotWRecomp",
+            "GPU layer: Cemu (MPL-2.0), with its graphic pack rules and the FPS++ approach for 60 fps.",
+            "Libraries: SDL3, fmt, zstd, glslang, Dear ImGui and metal-cpp.",
+            "Own code is MIT licensed. Full credits are in the README.",
+        };
+    }
     return v;
 }
 }  // namespace menu

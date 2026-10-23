@@ -1,5 +1,6 @@
 // In-game settings menu: opened with the DualSense touchpad, L3+R3 or F1. Navigation runs on the host
-// main thread (window.mm); runtime/cemu_shims/overlay_menu.cpp draws a snapshot on the GPU thread.
+// main thread (window.cpp); runtime/cemu_shims/overlay_menu.cpp draws a snapshot on the GPU thread.
+// The settings are grouped in tabs (Graphics, Controls, Audio, About). Every tab ends with a Close row.
 #pragma once
 #include <string>
 #include <vector>
@@ -9,6 +10,8 @@ bool is_open();
 void toggle();
 void close();
 void move(int dy);      // previous / next row
+void tab(int dir);      // previous / next tab (controller L1 / R1, keyboard Tab and PageUp / PageDown)
+void select_tab(int i); // touch / mouse: jump to a tab
 void change(int dir);   // left / right on the selected row
 void activate();        // confirm button
 
@@ -18,9 +21,12 @@ struct Row {
 };
 struct View {
     bool open = false;
-    int cursor = 0;
-    std::vector<Row> rows;
-    std::string note;
+    int tab = 0;                     // index into tabs
+    int cursor = 0;                  // selected index into rows (the current tab's rows, Close is last)
+    std::vector<std::string> tabs;   // tab titles
+    std::vector<Row> rows;           // rows of the current tab
+    std::vector<std::string> text;   // read-only lines of the current tab (About)
+    std::string note;                // short remark under the rows
 };
 View view();                    // snapshot for drawing
 void click(int row, int dir);   // touch / mouse: dir -1/+1 on a row's arrows, 0 on the row itself

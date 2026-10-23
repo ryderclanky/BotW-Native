@@ -424,13 +424,15 @@ void apply_input() {
             }
             if (it->kind == "quit") g_quit = true;
             else if (it->kind == "dump") threads::dump(true);  // tests: F:dump (watchdog output)
-            else if (it->kind == "menu") {  // tests: F:menu:toggle|up|down|left|right|ok
+            else if (it->kind == "menu") {  // tests: F:menu:toggle|up|down|left|right|ok|tabprev|tabnext
                 if (it->a == "toggle") menu::toggle();
                 else if (it->a == "up") menu::move(-1);
                 else if (it->a == "down") menu::move(+1);
                 else if (it->a == "left") menu::change(-1);
                 else if (it->a == "right") menu::change(+1);
                 else if (it->a == "ok") menu::activate();
+                else if (it->a == "tabprev") menu::tab(-1);
+                else if (it->a == "tabnext") menu::tab(+1);
             }
             else if (it->kind == "key" || it->kind == "hold")
                 g_active.push_back({button_by_name(it->a), 0, 0, 0, 0, f + (uint64_t)it->frames});
@@ -471,7 +473,7 @@ void log_controls() {
     LOG("controls: gamepad  L/R shoulders  triggers=ZL/ZR past about a quarter pull  Start=Plus  Back=Minus");
     LOG("controls: gamepad  Guide=Home  Share/Capture=TV  extra button=Sync  sticks +Y up, radial deadzone 0.15");
     LOG("controls: keyboard and the active controller are read together; the controller last used is active");
-    LOG("controls: F1, both stick clicks, or the touchpad opens the menu; Escape closes it; F11 fullscreen");
+    LOG("controls: F1, both stick clicks, or the touchpad opens the menu; the touchpad, Circle or Escape closes it; F11 fullscreen");
 }
 }  // namespace
 
@@ -612,20 +614,18 @@ void run() {
                 auto b = (SDL_GamepadButton)e.gbutton.button;
                 bool both_sticks = pad && ((b == SDL_GAMEPAD_BUTTON_LEFT_STICK && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_STICK)) ||
                                            (b == SDL_GAMEPAD_BUTTON_RIGHT_STICK && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_STICK)));
-                SDL_GamepadButton confirm = pad ? wii_face(pad, 0) : SDL_GAMEPAD_BUTTON_EAST;
-                SDL_GamepadButton back = pad ? wii_face(pad, 1) : SDL_GAMEPAD_BUTTON_SOUTH;
-                if (controls::loaded()) {
-                    if (int a = controls::mapped_button("a"); a >= 0) confirm = static_cast<SDL_GamepadButton>(a);
-                    if (int b = controls::mapped_button("b"); b >= 0) back = static_cast<SDL_GamepadButton>(b);
-                }
+                // The menu uses the physical positions, whatever the in-game button layout is: the bottom
+                // face button (Cross / Xbox A) selects, the right one (Circle / Xbox B) closes.
                 if (b == SDL_GAMEPAD_BUTTON_TOUCHPAD || both_sticks) menu::toggle();
                 else if (menu::is_open()) {
                     if (b == SDL_GAMEPAD_BUTTON_DPAD_UP) menu::move(-1);
                     else if (b == SDL_GAMEPAD_BUTTON_DPAD_DOWN) menu::move(+1);
                     else if (b == SDL_GAMEPAD_BUTTON_DPAD_LEFT) menu::change(-1);
                     else if (b == SDL_GAMEPAD_BUTTON_DPAD_RIGHT) menu::change(+1);
-                    else if (b == confirm) menu::activate();
-                    else if (b == back || b == SDL_GAMEPAD_BUTTON_START) menu::close();
+                    else if (b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) menu::tab(-1);
+                    else if (b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) menu::tab(+1);
+                    else if (b == SDL_GAMEPAD_BUTTON_SOUTH) menu::activate();
+                    else if (b == SDL_GAMEPAD_BUTTON_EAST || b == SDL_GAMEPAD_BUTTON_START) menu::close();
                 }
             } else if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
                 if (e.gaxis.value > kTriggerOn || e.gaxis.value < -kTriggerOn) note_used(e.gaxis.which);
@@ -647,6 +647,9 @@ void run() {
                         case SDLK_LEFT: menu::change(-1); break;
                         case SDLK_RIGHT: menu::change(+1); break;
                         case SDLK_RETURN: menu::activate(); break;
+                        case SDLK_TAB: menu::tab((e.key.mod & SDL_KMOD_SHIFT) ? -1 : +1); break;
+                        case SDLK_PAGEUP: menu::tab(-1); break;
+                        case SDLK_PAGEDOWN: menu::tab(+1); break;
                         default: break;
                     }
                 }

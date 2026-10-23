@@ -82,17 +82,41 @@ void LatteOverlay_render(bool padView) {
     if (ImGui::Begin("##menu", nullptr, overlay)) {
         ImGui::SetWindowFontScale(ui * 1.25f);
         const float label_w = 150 * ui, value_w = 230 * ui;
+        const float xs = ImGui::GetFrameHeight();  // X in the top-right corner, same height as a row
+        const float panel_w = label_w + value_w + 24 * ui + xs;  // fixed width: the panel does not jump between tabs
+        const ImVec4 gold = ImGui::ColorConvertU32ToFloat4(IM_COL32(255, 215, 90, 255));
+        ImGui::Dummy({panel_w, 0});
         ImGui::TextUnformatted("BotW-Native settings");
-        const float xs = ImGui::GetFrameHeight();  // X in the top-right corner
         ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - xs);
         if (ImGui::Button("X", {xs, xs})) menu::close();
         const ImVec2 xa = ImGui::GetItemRectMin(), xb = ImGui::GetItemRectMax();
+
+        // Tab bar: L1 / R1 on a controller, Tab or PageUp / PageDown on a keyboard, a tap on touch.
+        ImGui::TextDisabled("L1");
+        for (int t = 0; t < (int)v.tabs.size(); t++) {
+            ImGui::SameLine();
+            ImGui::PushID(1000 + t);
+            const bool cur = t == v.tab;
+            if (cur) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(gold.x * 0.45f, gold.y * 0.45f, gold.z * 0.25f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, gold);
+            }
+            if (ImGui::Button(v.tabs[t].c_str()) && !cur) menu::select_tab(t);
+            if (cur) ImGui::PopStyleColor(2);
+            ImGui::PopID();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("R1");
         ImGui::Separator();
+
+        // Body: the rows of the tab, or the read-only text of About. Padded to a fixed height.
+        const float body_top = ImGui::GetCursorPosY();
+        const float body_h = 9 * ImGui::GetFrameHeightWithSpacing();
         for (int i = 0; i < (int)v.rows.size(); i++) {
             const menu::Row& r = v.rows[i];
             ImGui::PushID(i);
             bool sel = i == v.cursor;
-            if (sel) ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 215, 90, 255));
+            if (sel) ImGui::PushStyleColor(ImGuiCol_Text, gold);
             if (ImGui::Selectable(r.label.c_str(), sel, 0, {r.action ? label_w + value_w : label_w, 0})) menu::click(i, 0);
             if (!r.action) {
                 ImGui::SameLine();
@@ -105,10 +129,31 @@ void LatteOverlay_render(bool padView) {
             if (sel) ImGui::PopStyleColor();
             ImGui::PopID();
         }
+        if (!v.text.empty()) {
+            ImGui::Spacing();
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + panel_w);
+            for (size_t i = 0; i < v.text.size(); i++) {
+                if (i == 0) ImGui::TextColored(gold, "%s", v.text[i].c_str());
+                else if (v.text[i].empty()) ImGui::Spacing();
+                else ImGui::TextWrapped("%s", v.text[i].c_str());
+            }
+            ImGui::PopTextWrapPos();
+        }
+        const float used = ImGui::GetCursorPosY() - body_top;
+        if (used < body_h) ImGui::Dummy({0, body_h - used});
         ImGui::Separator();
+
         ImGui::SetWindowFontScale(ui);
-        ImGui::TextUnformatted(v.note.c_str());
-        ImGui::TextUnformatted("D-pad: choose / change   A: select   B, touchpad, F1, X or a tap outside: close");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + panel_w);
+        if (!v.note.empty()) ImGui::TextWrapped("%s", v.note.c_str());
+        ImGui::TextWrapped("D-pad / left stick: move and change   L1 / R1: tab   Cross (A): select   Circle (B): close");
+        ImGui::SetWindowFontScale(ui * 1.1f);
+        ImGui::TextColored(gold, "Press touchpad to close");
+        ImGui::SetWindowFontScale(ui);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("Keyboard: F1 or Esc closes, Tab switches tab.  Touch: X or a tap outside closes.");
+        ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
         // for touch (host side, see menu::touch_close): panel and X in fractions of the screen
         const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize(), d = io.DisplaySize;
         const float panel[4] = {wp.x / d.x, wp.y / d.y, (wp.x + ws.x) / d.x, (wp.y + ws.y) / d.y};
