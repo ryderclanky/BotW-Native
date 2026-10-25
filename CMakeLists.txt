@@ -455,6 +455,10 @@ else()
   install(TARGETS ${_botw_ship} RUNTIME DESTINATION . BUNDLE DESTINATION .)
 endif()
 install(FILES "${CMAKE_SOURCE_DIR}/runtime/gamecontrollerdb.txt" DESTINATION .)
+# Ship the source too, so the launcher's Build finds CMakeLists.txt and tools/recompile.py.
+find_package(Git QUIET)
+install(CODE "set(BOTW_SRC \"${CMAKE_SOURCE_DIR}\")\nset(BOTW_GIT \"${GIT_EXECUTABLE}\")")
+install(SCRIPT "${CMAKE_SOURCE_DIR}/cmake/package_source.cmake")
 add_custom_target(botw_package
   COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}" --prefix "${BOTW_PACKAGE_DIR}" --strip
   DEPENDS ${_botw_ship}
