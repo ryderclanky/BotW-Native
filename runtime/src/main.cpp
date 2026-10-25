@@ -124,6 +124,14 @@ static void on_fault(int sig, siginfo_t* si, void* uctx) {
 }
 #endif
 
+#if defined(_WIN32)
+// Ask hybrid-graphics laptops for the high-performance GPU (read by the NVIDIA and AMD drivers).
+extern "C" {
+__declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
 int main(int argc, char** argv) {
 #if defined(__linux__) && defined(ENABLE_VULKAN)
     // Cemu re-execs itself to see whether RADV was built with LLVM. Must run before anything else.

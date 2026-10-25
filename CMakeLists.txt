@@ -373,6 +373,7 @@ if(WIN32)
     launcher/game_build.cpp
     launcher/game_info.cpp
     launcher/mods.cpp
+    launcher/gpu_list.cpp
     launcher/setup_wizard.cpp
     launcher/unzip.cpp
     "${CMAKE_BINARY_DIR}/botw_launcher_manifest.rc")
@@ -426,13 +427,16 @@ message(STATUS "BotWRecomp backends: Metal=${BOTW_ENABLE_METAL} Vulkan=${BOTW_EN
 include(${CMAKE_SOURCE_DIR}/runtime/src/gpu_native/gpu_native.cmake OPTIONAL)
 
 # Unit test for the mod file index (docs/mods.md). Off by default.
-option(BOTW_BUILD_TESTS "Build the BotWModTests unit test" OFF)
+option(BOTW_BUILD_TESTS "Build the BotWModTests and BotWGpuPickTests unit tests" OFF)
 if(BOTW_BUILD_TESTS)
   add_executable(BotWModTests tests/mods_test.cpp runtime/src/coreinit/mods.cpp runtime/src/log.cpp)
   target_include_directories(BotWModTests PRIVATE runtime/src)
   target_link_libraries(BotWModTests PRIVATE ZLIB::ZLIB)
   enable_testing()
   add_test(NAME mods COMMAND BotWModTests)
+  add_executable(BotWGpuPickTests tests/gpu_pick_test.cpp)
+  target_include_directories(BotWGpuPickTests PRIVATE runtime/cemu_shims)
+  add_test(NAME gpu_pick COMMAND BotWGpuPickTests)
 endif()
 
 # Release package: `cmake --build <build> --target botw_package` (or

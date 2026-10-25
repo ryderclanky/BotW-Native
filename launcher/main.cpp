@@ -19,6 +19,7 @@
 
 #include "game_build.h"
 #include "game_info.h"
+#include "gpu_list.h"
 #include "mods.h"
 #include "setup_wizard.h"
 
@@ -49,7 +50,7 @@ enum Id {
     ID_LAYOUT, ID_GYRO, ID_SCALE, ID_FPS, ID_FULLSCREEN, ID_MOD_ADD, ID_MOD_ADDDIR,
     ID_PLAY, ID_MODS, ID_SETTINGS, ID_OPEN_GAME, ID_OPEN_USER, ID_OPEN_LOG, ID_CLASSIC,
     ID_MODLIST, ID_MODSAVE, ID_GAME_EDIT, ID_USER_EDIT,
-    ID_SRC_EDIT, ID_SRC_BROWSE, ID_TC_INSTALL, ID_TC_LINK, ID_TC_RECHECK, ID_PREBUILT, ID_BUILD, ID_BUILD_STOP,
+    ID_SRC_EDIT, ID_SRC_BROWSE, ID_TC_INSTALL, ID_TC_LINK, ID_TC_RECHECK, ID_PREBUILT, ID_BUILD, ID_BUILD_STOP, ID_GPU,
 };
 
 struct Config {
@@ -74,7 +75,10 @@ struct App {
     HWND game_edit{}, game_browse{}, game_rows{}, game_merge{};
     HWND user_edit{}, user_note{};
     HWND pad_list{}, layout{}, gyro{};
-    HWND gfx_note{}, scale{}, fps{}, fullscreen{};
+    HWND gfx_note{}, scale{}, fps{}, fullscreen{}, gpu{};
+    std::vector<gpupick::Gpu> gpus;
+    bool gpus_loaded = false;
+    int gpu_missing = -1;  // combo item for a saved GPU that is not in the list
     HWND mod_note{};
     HWND src_edit{}, tc_rows{}, prebuilt{}, build_btn{}, stop_btn{}, bstage{}, bbar{}, belapsed{}, blog{}, bjobs{};
     gamebuild::Toolchain tc;
@@ -411,13 +415,42 @@ void build_wizard() {
     label(S_GFX, L"Frame rate:", X, 240, 110, 20);
     A.fps = on_page(S_GFX, mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, X + 120, 236, 220, 200, ID_FPS));
     for (auto s : {L"30 FPS (original)", L"60 FPS"}) SendMessageW(A.fps, CB_ADDSTRING, 0, (LPARAM)s);
-    A.fullscreen = on_page(S_GFX, mk(L"BUTTON", L"Start in fullscreen", BS_AUTOCHECKBOX | WS_TABSTOP, X, 276, W, 22, ID_FULLSCREEN));
+    label(S_GFX, L"Graphics card:", X, 276, 110, 20);
+    A.gpu = on_page(S_GFX, mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, X + 120, 272, W - 120, 200, ID_GPU));
+    A.fullscreen = on_page(S_GFX, mk(L"BUTTON", L"Start in fullscreen", BS_AUTOCHECKBOX | WS_TABSTOP, X, 312, W, 22, ID_FULLSCREEN));
     // mods
     on_page(S_MODS, mk(L"BUTTON", L"Add mod archive...", BS_PUSHBUTTON | WS_TABSTOP, X, 160, 160, 28, ID_MOD_ADD));
     on_page(S_MODS, mk(L"BUTTON", L"Add mod folder...", BS_PUSHBUTTON | WS_TABSTOP, X + 170, 160, 160, 28, ID_MOD_ADDDIR));
     A.mod_note = label(S_MODS, L"", X, 200, W, 160);
     // ready
     A.ready_text = label(S_READY, L"", X, 156, W, 220);
+}
+
+// Graphics card list: "Automatic" first, then every Vulkan GPU, then a saved GPU that is missing.
+void fill_gpu_combo() {
+    if (!A.gpus_loaded) { A.gpus = gpulist::enumerate(); A.gpus_loaded = true; }
+    SendMessageW(A.gpu, CB_RESETCONTENT, 0, 0);
+    int b = gpupick::best(A.gpus);
+    std::wstring a = A.gpus.empty() ? L"Automatic (no Vulkan GPU found)"
+                   : L"Automatic (best GPU: " + widen(A.gpus[b < 0 ? 0 : b].name) + L")";
+    SendMessageW(A.gpu, CB_ADDSTRING, 0, (LPARAM)a.c_str());
+    int by_uuid = 0, by_name = 0;
+    for (size_t i = 0; i < A.gpus.size(); i++) {
+        const auto& g = A.gpus[i];
+        std::wstring s = widen(g.name) + L" (" + widen(gpupick::type_name(g.type)) + L", " +
+                         std::to_wstring((g.vram + (512ull << 20)) >> 30) + L" GB)";
+        SendMessageW(A.gpu, CB_ADDSTRING, 0, (LPARAM)s.c_str());
+        if (!by_uuid && !A.prefs.gpu.empty() && gpupick::uuid_hex(g.uuid) == gpupick::lower(A.prefs.gpu)) by_uuid = (int)i + 1;
+        if (!by_name && !A.prefs.gpu_name.empty() && g.name == A.prefs.gpu_name) by_name = (int)i + 1;
+    }
+    int sel = by_uuid ? by_uuid : by_name;
+    A.gpu_missing = -1;
+    if (!sel && (!A.prefs.gpu.empty() || !A.prefs.gpu_name.empty())) {
+        std::wstring s = widen(A.prefs.gpu_name.empty() ? A.prefs.gpu : A.prefs.gpu_name) + L" (saved, not found)";
+        A.gpu_missing = (int)SendMessageW(A.gpu, CB_ADDSTRING, 0, (LPARAM)s.c_str());
+        sel = A.gpu_missing;
+    }
+    SendMessageW(A.gpu, CB_SETCURSEL, sel, 0);
 }
 
 void build_main() {
@@ -772,6 +805,7 @@ void enter_step(int s) {
         SendMessageW(A.scale, CB_SETCURSEL, std::clamp(A.prefs.scale, 1, 3) - 1, 0);
         SendMessageW(A.fps, CB_SETCURSEL, A.prefs.fps >= 60 ? 1 : 0, 0);
         SendMessageW(A.fullscreen, BM_SETCHECK, A.cfg.fullscreen ? BST_CHECKED : BST_UNCHECKED, 0);
+        fill_gpu_combo();
         set_status(L"Press Next to keep these.", kOk);
         break;
     }
@@ -830,6 +864,16 @@ void go_next() {
         A.prefs.scale = (int)SendMessageW(A.scale, CB_GETCURSEL, 0, 0) + 1;
         A.prefs.fps = SendMessageW(A.fps, CB_GETCURSEL, 0, 0) == 1 ? 60 : 30;
         A.cfg.fullscreen = SendMessageW(A.fullscreen, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        {
+            int g = (int)SendMessageW(A.gpu, CB_GETCURSEL, 0, 0);
+            if (g <= 0) {
+                A.prefs.gpu.clear();
+                A.prefs.gpu_name.clear();
+            } else if (g != A.gpu_missing && g - 1 < (int)A.gpus.size()) {
+                A.prefs.gpu = gpupick::uuid_hex(A.gpus[g - 1].uuid);
+                A.prefs.gpu_name = A.gpus[g - 1].name;
+            }
+        }
         break;
     case S_READY: finish_wizard(); return;
     }

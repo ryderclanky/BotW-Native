@@ -26,6 +26,8 @@ struct Settings {
     int touch = 0;         // on-screen controls: 0 auto (while no controller), 1 on, 2 off
 #endif
     bool touch_hidden = false;  // collapsed to the show/hide button (that button toggles it)
+    std::string gpu;       // Vulkan device UUID (hex) of the chosen GPU; empty = automatic (best GPU)
+    std::string gpu_name;  // its name, used when the UUID is not found
 };
 
 namespace settings {

@@ -54,6 +54,8 @@ struct GamePrefs {
     int layout = -1;             // -1 = Auto, 1 = Xbox, 0 = Nintendo
     bool gamepad_view = false;
     bool gyro = true;
+    std::string gpu;       // Vulkan device UUID (hex); empty = automatic
+    std::string gpu_name;  // shown and used when the UUID is not found
 };
 
 ToolchainStatus inspect_toolchain(const std::filesystem::path& launcher_dir,

@@ -23,6 +23,7 @@ void save_locked() {
     FILE* f = fopen(g_path.c_str(), "w");
     if (!f) return;
     fprintf(f, "# BotWRecomp settings (also editable from the in-game menu: touchpad, L3+R3 or F1)\n");
+    fprintf(f, "gpu=%s\ngpu_name=%s\n", g_s.gpu.c_str(), g_s.gpu_name.c_str());
     fprintf(f, "fps=%d\nscale=%g\ndisplay=%d\nfilter=%d\ngyro=%d\nrumble=%d\nlayout=%d\nshow_fps=%d\nvolume=%d\ntouch=%d\ntouch_hidden=%d\ngamepad_view=%d\n", g_s.fps,
             g_s.scale, g_s.display, g_s.filter, g_s.gyro, g_s.rumble, g_s.layout, g_s.show_fps, g_s.volume, g_s.touch, g_s.touch_hidden,
             g_s.gamepad_view);
@@ -63,7 +64,7 @@ void load(const std::string& path) {
         std::lock_guard<std::mutex> l(g_lock);
         g_path = path;
         if (FILE* f = fopen(path.c_str(), "r")) {
-            char line[256];
+            char line[512];
             while (fgets(line, sizeof line, f)) {
                 char* eq = strchr(line, '=');
                 if (line[0] == '#' || !eq) continue;
@@ -84,6 +85,11 @@ void load(const std::string& path) {
                 else if (!strcmp(line, "touch")) g_s.touch = atoi(v);
                 else if (!strcmp(line, "touch_hidden")) g_s.touch_hidden = atoi(v) != 0;
                 else if (!strcmp(line, "gamepad_view")) g_s.gamepad_view = atoi(v) != 0;
+                else if (!strcmp(line, "gpu") || !strcmp(line, "gpu_name")) {
+                    std::string s = v;
+                    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ')) s.pop_back();
+                    (line[3] ? g_s.gpu_name : g_s.gpu) = s;
+                }
             }
             fclose(f);
             LOG("settings: %s", path.c_str());
@@ -92,3 +98,10 @@ void load(const std::string& path) {
     apply();
 }
 }  // namespace settings
+
+// Read by the Vulkan renderer when it picks a GPU.
+void botw_gpu_preference(std::string& uuid, std::string& name) {
+    Settings s = settings::get();
+    uuid = s.gpu;
+    name = s.gpu_name;
+}

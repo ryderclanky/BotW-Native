@@ -1,4 +1,8 @@
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanRenderer.h"
+#include "gpu_pick.h"
+
+void botw_gpu_preference(std::string& uuid, std::string& name);  // settings.cpp
+
 #include "Cafe/HW/Latte/Renderer/Vulkan/VulkanAPI.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/LatteTextureVk.h"
 #include "Cafe/HW/Latte/Renderer/Vulkan/RendererShaderVk.h"
@@ -569,47 +573,46 @@ VulkanRenderer::VulkanRenderer() : Renderer(RendererAPI::Vulkan)
 	auto surface = CreateFramebufferSurface(m_instance, WindowSystem::GetWindowInfo().window_main);
 
 	auto& config = GetConfig();
-	decltype(config.vk_graphic_device_uuid) zero{};
-	const bool has_device_set = config.vk_graphic_device_uuid != zero;
-
-	VkPhysicalDevice fallbackDevice = VK_NULL_HANDLE;
-	std::string fallbackDeviceName = "";
+	// GPU choice: BOTW_GPU, then the GPU saved in settings.ini, then the best one (gpu_pick.h)
+	std::string prefUuid, prefName;
+	botw_gpu_preference(prefUuid, prefName);
+	{
+		decltype(config.vk_graphic_device_uuid) zero{};
+		if (prefUuid.empty() && config.vk_graphic_device_uuid != zero)
+			prefUuid = gpupick::uuid_hex(config.vk_graphic_device_uuid.data());
+	}
+	const char* gpuEnv = getenv("BOTW_GPU");
 
 	std::vector<VkPhysicalDevice> devices(device_count);
 	vkEnumeratePhysicalDevices(m_instance, &device_count, devices.data());
+	devices.resize(device_count);
+	std::vector<gpupick::Gpu> gpus;
 	for (const auto& device : devices)
 	{
-		if (IsDeviceSuitable(surface, device))
-		{
-			VkPhysicalDeviceIDProperties physDeviceIDProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES };
-			VkPhysicalDeviceProperties2 physDeviceProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
-			physDeviceProps.pNext = &physDeviceIDProps;
-			vkGetPhysicalDeviceProperties2(device, &physDeviceProps);
-
-			if (fallbackDevice == VK_NULL_HANDLE)
-			{
-				fallbackDevice = device;
-				fallbackDeviceName = physDeviceProps.properties.deviceName;
-			}
-
-			if (has_device_set)
-			{
-				if (memcmp(config.vk_graphic_device_uuid.data(), physDeviceIDProps.deviceUUID, VK_UUID_SIZE) != 0)
-					continue;
-			}
-
-			m_physicalDevice = device;
-			m_selectedDeviceName = physDeviceProps.properties.deviceName;
-			break;
-		}
+		VkPhysicalDeviceIDProperties physDeviceIDProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES };
+		VkPhysicalDeviceProperties2 physDeviceProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+		physDeviceProps.pNext = &physDeviceIDProps;
+		vkGetPhysicalDeviceProperties2(device, &physDeviceProps);
+		VkPhysicalDeviceMemoryProperties memProps{};
+		vkGetPhysicalDeviceMemoryProperties(device, &memProps);
+		gpupick::Gpu g;
+		g.name = physDeviceProps.properties.deviceName;
+		memcpy(g.uuid, physDeviceIDProps.deviceUUID, VK_UUID_SIZE);
+		g.type = (int)physDeviceProps.properties.deviceType;
+		for (uint32 h = 0; h < memProps.memoryHeapCount; h++)
+			if (memProps.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+				g.vram += memProps.memoryHeaps[h].size;
+		g.usable = IsDeviceSuitable(surface, device);
+		cemuLog_log(LogType::Force, "GPU {}: {} ({}, {} MB device memory){}", gpus.size(), g.name, gpupick::type_name(g.type),
+			g.vram >> 20, g.usable ? "" : ", not usable");
+		gpus.push_back(g);
 	}
-
-	if (m_physicalDevice == VK_NULL_HANDLE && fallbackDevice != VK_NULL_HANDLE)
+	const gpupick::Choice gpuChoice = gpupick::pick(gpus, prefUuid, prefName, gpuEnv ? gpuEnv : "");
+	if (gpuChoice.index >= 0)
 	{
-		cemuLog_log(LogType::Force, "The selected GPU could not be found or is not suitable. Falling back to first available device instead");
-		m_physicalDevice = fallbackDevice;
-		m_selectedDeviceName = fallbackDeviceName;
-		config.vk_graphic_device_uuid = {}; // resetting device selection
+		m_physicalDevice = devices[gpuChoice.index];
+		m_selectedDeviceName = gpus[gpuChoice.index].name;
+		cemuLog_log(LogType::Force, "Using GPU {}: {} ({})", gpuChoice.index, m_selectedDeviceName, gpuChoice.reason);
 	}
 	else if (m_physicalDevice == VK_NULL_HANDLE)
 	{
