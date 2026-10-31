@@ -35,7 +35,7 @@ constexpr uint32_t kExpectedTitleVersion = 208;
 constexpr const char* kUsaTitleId = "00050000101C9400";
 constexpr const char* kUsaUpdateTitleId = "0005000E101C9400";
 constexpr const char* kUsaDlcTitleId = "0005000C101C9400";
-constexpr const char* kUsaV208RpxSha1 = "fb8da3722bc2ce3dea2efac2db3beadc3fd8cab2";
+constexpr const char* kUsaV208RpxSha1 = "5650b6a81832778fa5c5b31d5a1efb9c48a652b5";
 constexpr const char* kUsaV208RpxSha256 = "ba58da5b95ce929e005d058ceb08b9b2788d1ab2bbc8a6c189bbadca0bb34d30";
 
 struct RpxVerify {
@@ -58,8 +58,10 @@ struct DumpLayout {
     Info base_info;
     Info update_info;
     bool needs_merge = false;
+    std::string validation_error;
 
     bool ready() const {
+        if (!validation_error.empty()) return false;
         if (!merged_game.empty()) return true;
         return !base_folder.empty() && !update_folder.empty();
     }
@@ -78,11 +80,20 @@ std::string sha1_bytes(const void* data, size_t len);
 std::string sha1_file(const std::filesystem::path& file_path);
 RpxVerify verify_rpx(const std::filesystem::path& game_or_rpx);
 
+// Fingerprint every local input used to generate guest code. Empty means an input could not be read.
+std::string codegen_fingerprint(const std::filesystem::path& source, const std::string& probes);
+bool codegen_cache_matches(const std::filesystem::path& source, const std::string& rpx_sha1,
+                           const std::string& probes);
+
 // Auto-discovers Merged or separate Base + Update (v208) + DLC (v80) folders under `root`.
 DumpLayout discover_dumps(const std::filesystem::path& root);
+bool validate_dump_pair(const std::filesystem::path& base_dir,
+                        const std::filesystem::path& update_dir,
+                        const std::filesystem::path& dlc_dir, std::string& err);
 
-// Merges separate Base + Update (+ optional DLC) folders into `target_game_dir` using hardlinks
-// when on the same volume (falling back to file copies across volumes).
+// Merges separate Base + Update (+ optional DLC) folders into `target_game_dir` using a staging
+// folder, hardlinks on the same volume, and file copies across volumes. The target must not overlap
+// any source folder.
 using MergeProgressFn = std::function<void(int done, int total, const std::string& label)>;
 bool merge_dumps(const std::filesystem::path& base_dir,
                  const std::filesystem::path& update_dir,

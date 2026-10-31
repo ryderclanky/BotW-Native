@@ -75,6 +75,7 @@ class Generator:
     def gen_function(self, fn: Function) -> tuple[str, set[str]]:
         callees: set[str] = set()
         out = [f'extern "C" void f_{fn.entry:08x}(PPCContext* __restrict c) {{',
+               f"  if (__builtin_expect(g_has_guest_fn_overrides.load(std::memory_order_acquire), 0) && rt_try_override(c, 0x{fn.entry:08x}u, f_{fn.entry:08x})) return;",
                "  uint8_t* const M = g_mem; (void)M;"]
         if self.check_returns:
             out.append("  const uint32_t lr0 = c->lr; (void)lr0;")

@@ -4,6 +4,7 @@
 #include "input/input.h"
 #include "../log.h"
 #include "../os.h"
+#include "../utf8_path.h"
 
 #include <SDL3/SDL.h>
 
@@ -138,8 +139,8 @@ bool ensure() {
     if (g_state != State::Untried) return g_state == State::On;
     g_state = State::Off;
     if (g_user_root.empty()) return false;
-    std::filesystem::path file = std::filesystem::path(g_user_root) / "controls.ini";
-    g_path = file.string();
+    std::filesystem::path file = botw::path_from_utf8(g_user_root) / "controls.ini";
+    g_path = botw::path_to_utf8(file);
     std::vector<controlsfile::Binding> rows;
     std::string err;
     auto st = controlsfile::load(file, rows, err);

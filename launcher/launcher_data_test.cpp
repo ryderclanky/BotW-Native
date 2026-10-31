@@ -161,6 +161,11 @@ void test_sha1_and_dumps(const fs::path& root) {
     expect(gameinfo::sha1_bytes("abc", 3) == "a9993e364706816aba3e25717850c26c9cd0d89d", "sha1 of abc");
 
     fs::remove_all(root);
+    write_text(root / "app_only" / "code" / "app.xml",
+               "<app><title_id>0005000E101C9400</title_id><title_version type=\"hexBinary\" length=\"2\">00D0</title_version></app>");
+    auto app_info = gameinfo::read(root / "app_only");
+    expect(app_info.title_id == "0005000E101C9400" && app_info.has_title_version && app_info.title_version == 208,
+           "app.xml fallback parses hexadecimal v208");
     // Simulate a Dumpling / wiiuu parent folder with separate Base (v0), Update (v208), and DLC (v80)
     fs::path base = root / "wiiuu" / "BotW_Base";
     fs::path upd = root / "wiiuu" / "BotW_Update_v208";
@@ -192,6 +197,34 @@ void test_sha1_and_dumps(const fs::path& root) {
 
     fs::path merged = root / "merged_game";
     std::string err;
+    write_text(upd / "meta" / "meta.xml",
+               "<menu><title_id>0005000E101C9500</title_id><title_version>208</title_version></menu>");
+    expect(!gameinfo::discover_dumps(root / "wiiuu").ready(), "mixed regions are not ready");
+    expect(!gameinfo::merge_dumps(base, upd, dlc, merged, err), "reject mismatched update region");
+    expect(!fs::exists(merged), "invalid merge leaves destination untouched");
+    write_text(upd / "meta" / "meta.xml",
+               "<menu><title_id>0005000E101C9400</title_id><title_version>208</title_version></menu>");
+    write_text(dlc / "meta" / "meta.xml",
+               "<menu><title_id>0005000C101C9500</title_id><title_version>80</title_version></menu>");
+    expect(!gameinfo::merge_dumps(base, upd, dlc, merged, err), "reject mismatched DLC region");
+    write_text(dlc / "meta" / "meta.xml",
+               "<menu><title_id>0005000C101C9400</title_id><title_version>80</title_version></menu>");
+    write_text(upd / "meta" / "meta.xml",
+               "<menu><title_id>0005000E101C9400</title_id><title_version>192</title_version></menu>");
+    expect(!gameinfo::merge_dumps(base, upd, dlc, merged, err), "reject wrong update version");
+    write_text(upd / "meta" / "meta.xml",
+               "<menu><title_id>0005000E101C9400</title_id><title_version>208</title_version></menu>");
+    expect(!gameinfo::merge_dumps(base, upd, dlc, base, err), "reject base as merge destination");
+    expect(read_text(base / "code" / "U-King.rpx") == "base_v0_rpx", "rejected merge preserves base rpx");
+    expect(!gameinfo::merge_dumps(base, upd, dlc, base / "nested", err), "reject destination inside base");
+    expect(!gameinfo::merge_dumps(base, upd, dlc, root / "wiiuu", err), "reject destination containing sources");
+#ifdef _WIN32
+    std::wstring alternate_case = base.wstring();
+    for (auto& ch : alternate_case) if (ch >= L'a' && ch <= L'z') ch -= L'a' - L'A';
+    expect(!gameinfo::merge_dumps(base, upd, dlc, fs::path(alternate_case), err), "reject case alias of base");
+    expect(read_text(base / "code" / "U-King.rpx") == "base_v0_rpx", "case alias preserves base rpx");
+#endif
+    err.clear();
     expect(gameinfo::merge_dumps(layout.base_folder, layout.update_folder, layout.dlc_folder, merged, err),
            "merge_dumps succeeds: " + err);
 
@@ -205,6 +238,17 @@ void test_sha1_and_dumps(const fs::path& root) {
     auto minfo = gameinfo::read(merged);
     expect(minfo.has_rpx && minfo.has_content && minfo.has_meta && minfo.has_dlc, "merged game info complete");
     expect(minfo.title_version == 208, "merged version is 208");
+
+    fs::path linked_base = root / "linked_base", linked_output = root / "linked_output";
+    write_text(linked_base / "meta" / "meta.xml",
+               "<menu><title_id>00050000101C9400</title_id><title_version>0</title_version></menu>");
+    write_text(linked_output / "Pack" / "marker", "preserve");
+    std::error_code symlink_ec;
+    fs::create_directory_symlink(linked_output, linked_base / "content", symlink_ec);
+    if (!symlink_ec) {
+        expect(!gameinfo::merge_dumps(linked_base, upd, {}, linked_output, err), "reject source folder linked to target");
+        expect(read_text(linked_output / "Pack" / "marker") == "preserve", "linked source remains untouched");
+    }
 
     fs::remove_all(root);
 }
@@ -241,7 +285,38 @@ void test_setup_wizard(const fs::path& root) {
     auto r = setupwizard::read_game_prefs(root);
     expect(r.scale == 2 && r.fps == 60 && r.layout == 1 && r.gamepad_view && !r.gyro, "read_game_prefs round-trip");
     expect(read_text(root / "settings.ini").find("volume=80") != std::string::npos, "preserved volume=80");
+
+    fs::path controller_repo = root / "controller_repo";
+    fs::path runtime_dir = root / "runtime_install";
+    write_text(controller_repo / "runtime" / "gamecontrollerdb.txt", "current mappings\n");
+    write_text(runtime_dir / "gamecontrollerdb.txt", "stale mappings\n");
+    setupwizard::deploy_runtime_files(runtime_dir, controller_repo);
+    expect(read_text(runtime_dir / "gamecontrollerdb.txt") == "current mappings\n",
+           "runtime install refreshes the controller database from runtime/");
     fs::remove_all(root, ec);
+}
+
+void test_codegen_cache(const fs::path& root) {
+    fs::remove_all(root);
+    write_text(root / "tools" / "recompile.py", "generator one");
+    write_text(root / "cafe" / "codegen.py", "codegen one");
+    write_text(root / "runtime" / "src" / "game" / "hooks.cpp", "BOTW_HOOK(0x10)");
+    write_text(root / "generated" / "table.cpp", "table");
+    std::string fingerprint = gameinfo::codegen_fingerprint(root, "");
+    expect(!fingerprint.empty(), "fingerprint generation inputs");
+    write_text(root / "generated" / ".codegen_complete", "rpxhash\n" + fingerprint + "\n");
+    expect(gameinfo::codegen_cache_matches(root, "rpxhash", ""), "matching codegen cache reused");
+    expect(!gameinfo::codegen_cache_matches(root, "other", ""), "changed RPX invalidates cache");
+    expect(!gameinfo::codegen_cache_matches(root, "rpxhash", "1234"), "changed probes invalidate cache");
+    write_text(root / "runtime" / "src" / "game" / "hooks.cpp", "BOTW_HOOK(0x20)");
+    expect(!gameinfo::codegen_cache_matches(root, "rpxhash", ""), "changed hook invalidates cache");
+    write_text(root / "runtime" / "src" / "game" / "hooks.cpp", "BOTW_HOOK(0x10)");
+    write_text(root / "cafe" / "codegen.py", "codegen two");
+    expect(!gameinfo::codegen_cache_matches(root, "rpxhash", ""), "changed generator invalidates cache");
+    write_text(root / "cafe" / "codegen.py", "codegen one");
+    write_text(root / "cafe" / "new_module.py", "new input");
+    expect(!gameinfo::codegen_cache_matches(root, "rpxhash", ""), "new generator module invalidates cache");
+    fs::remove_all(root);
 }
 
 }  // namespace
@@ -250,8 +325,11 @@ int main() {
     test_meta();
     test_tga();
     test_mods(fs::temp_directory_path() / "launcher_data_test");
-    test_sha1_and_dumps(fs::temp_directory_path() / "launcher_dump_test");
+    // Exercise dump discovery and merging under a path with spaces, an
+    // ampersand, and non-ASCII text, as reported in Windows setup failures.
+    test_sha1_and_dumps(fs::temp_directory_path() / fs::path(u8"launcher dump test λ &"));
     test_setup_wizard(fs::temp_directory_path() / "launcher_setup_test");
+    test_codegen_cache(fs::temp_directory_path() / "launcher_codegen_test");
     if (g_fails) {
         std::cerr << g_fails << " failed\n";
         return 1;

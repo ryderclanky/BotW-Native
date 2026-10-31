@@ -19,6 +19,7 @@
 
 #include "game_build.h"
 #include "game_info.h"
+#include "gpu_list.h"
 #include "mods.h"
 #include "setup_wizard.h"
 
@@ -48,13 +49,14 @@ enum Id {
     ID_BACK = 100, ID_NEXT, ID_GAME_BROWSE, ID_GAME_MERGE, ID_USER_BROWSE, ID_USER_DEFAULT,
     ID_LAYOUT, ID_GYRO, ID_SCALE, ID_FPS, ID_FULLSCREEN, ID_MOD_ADD, ID_MOD_ADDDIR,
     ID_PLAY, ID_MODS, ID_SETTINGS, ID_OPEN_GAME, ID_OPEN_USER, ID_OPEN_LOG, ID_CLASSIC,
-    ID_MODLIST, ID_MODSAVE, ID_GAME_EDIT, ID_USER_EDIT,
-    ID_SRC_EDIT, ID_SRC_BROWSE, ID_TC_INSTALL, ID_TC_LINK, ID_TC_RECHECK, ID_PREBUILT, ID_BUILD, ID_BUILD_STOP,
+    ID_MODLIST, ID_MODSAVE, ID_MOD_CATEGORY, ID_MOD_OPTION, ID_MOD_OPTIONS_HINT, ID_GAME_EDIT, ID_USER_EDIT,
+    ID_SRC_EDIT, ID_SRC_BROWSE, ID_TC_INSTALL, ID_TC_LINK, ID_TC_RECHECK, ID_PREBUILT, ID_BUILD, ID_BUILD_STOP, ID_NO_DLC, ID_GPU, ID_LANGUAGE,
 };
 
 struct Config {
-    std::wstring game, exe, user, seconds = L"0", theme, source, build_state;
-    bool fullscreen = false, gamepad_view = false, no_mods = false, setup_done = false;
+    std::wstring game, exe, user, seconds = L"0", theme, source, build_state, language;
+    int window_mode = 0;
+    bool gamepad_view = false, no_mods = false, no_dlc = false, setup_done = false;
     std::vector<std::string> other;
 };
 
@@ -71,10 +73,13 @@ struct App {
     HWND steps[S_COUNT]{};
     HWND head{}, help{}, status{}, back{}, next{};
     std::vector<HWND> page[S_COUNT];
-    HWND game_edit{}, game_browse{}, game_rows{}, game_merge{};
+    HWND game_edit{}, game_browse{}, game_rows{}, game_merge{}, no_dlc{}, language{};
     HWND user_edit{}, user_note{};
     HWND pad_list{}, layout{}, gyro{};
-    HWND gfx_note{}, scale{}, fps{}, fullscreen{};
+    HWND gfx_note{}, scale{}, fps{}, fullscreen{}, gpu{};
+    std::vector<gpupick::Gpu> gpus;
+    bool gpus_loaded = false;
+    int gpu_missing = -1;
     HWND mod_note{};
     HWND src_edit{}, tc_rows{}, prebuilt{}, build_btn{}, stop_btn{}, bstage{}, bbar{}, belapsed{}, blog{}, bjobs{};
     gamebuild::Toolchain tc;
@@ -150,9 +155,12 @@ void load_ini() {
         else if (k == "exe") c.exe = widen(v);
         else if (k == "user") { if (!v.empty()) c.user = widen(v); }
         else if (k == "seconds") c.seconds = widen(v);
-        else if (k == "fullscreen") c.fullscreen = v == "1";
+        else if (k == "fullscreen") c.window_mode = v == "1" ? 1 : 0;
+        else if (k == "window_mode") c.window_mode = std::clamp(atoi(v.c_str()), 0, 2);
         else if (k == "gamepad_view") c.gamepad_view = v == "1";
         else if (k == "no_mods") c.no_mods = v == "1";
+        else if (k == "no_dlc") c.no_dlc = v == "1";
+        else if (k == "language") c.language = widen(v);
         else if (k == "setup_done") c.setup_done = v == "1";
         else if (k == "theme") c.theme = widen(v);
         else if (k == "source") c.source = widen(v);
@@ -200,9 +208,12 @@ void write_ini(std::ostream& out) {
     line("exe", A.cfg.exe);
     line("user", A.cfg.user);
     line("seconds", A.cfg.seconds);
-    line("fullscreen", A.cfg.fullscreen ? L"1" : L"0");
+    line("fullscreen", A.cfg.window_mode ? L"1" : L"0");
+    line("window_mode", std::to_wstring(A.cfg.window_mode));
     line("gamepad_view", A.cfg.gamepad_view ? L"1" : L"0");
     line("no_mods", A.cfg.no_mods ? L"1" : L"0");
+    line("no_dlc", A.cfg.no_dlc ? L"1" : L"0");
+    line("language", A.cfg.language);
     line("setup_done", A.cfg.setup_done ? L"1" : L"0");
     line("theme", A.cfg.theme);
     line("source", A.cfg.source);
@@ -370,6 +381,11 @@ void build_wizard() {
     A.game_browse = on_page(S_GAME, mk(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, X + W - 96, 181, 96, 26, ID_GAME_BROWSE));
     A.game_rows = label(S_GAME, L"", X, 216, W, 120);
     A.game_merge = on_page(S_GAME, mk(L"BUTTON", L"Combine into one game folder...", BS_PUSHBUTTON | WS_TABSTOP, X, 340, 240, 28, ID_GAME_MERGE));
+    A.no_dlc = on_page(S_GAME, mk(L"BUTTON", L"Launch without DLC", BS_AUTOCHECKBOX | WS_TABSTOP, X, 376, W, 22, ID_NO_DLC));
+    label(S_GAME, L"Game language:", X, 408, 120, 20);
+    A.language = on_page(S_GAME, mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, X + 120, 404, 240, 220, ID_LANGUAGE));
+    for (auto name : {L"Automatic (from game files)", L"English", L"French", L"German", L"Spanish", L"Italian", L"Dutch", L"Russian", L"Japanese"})
+        SendMessageW(A.language, CB_ADDSTRING, 0, (LPARAM)name);
     // build
     label(S_BUILD, L"Source folder:", X, 156, 96, 20);
     A.src_edit = on_page(S_BUILD, mk(L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, X + 100, 152, W - 204, 24, ID_SRC_EDIT));
@@ -411,13 +427,44 @@ void build_wizard() {
     label(S_GFX, L"Frame rate:", X, 240, 110, 20);
     A.fps = on_page(S_GFX, mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, X + 120, 236, 220, 200, ID_FPS));
     for (auto s : {L"30 FPS (original)", L"60 FPS"}) SendMessageW(A.fps, CB_ADDSTRING, 0, (LPARAM)s);
-    A.fullscreen = on_page(S_GFX, mk(L"BUTTON", L"Start in fullscreen", BS_AUTOCHECKBOX | WS_TABSTOP, X, 276, W, 22, ID_FULLSCREEN));
+    label(S_GFX, L"Graphics card:", X, 276, 110, 20);
+    A.gpu = on_page(S_GFX, mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, X + 120, 272, W - 120, 200, ID_GPU));
+    label(S_GFX, L"Window mode:", X, 312, 110, 20);
+    A.fullscreen = on_page(S_GFX, mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, X + 120, 308, 240, 200, ID_FULLSCREEN));
+    for (auto name : {L"Windowed", L"Borderless fullscreen", L"Exclusive fullscreen"})
+        SendMessageW(A.fullscreen, CB_ADDSTRING, 0, (LPARAM)name);
     // mods
     on_page(S_MODS, mk(L"BUTTON", L"Add mod archive...", BS_PUSHBUTTON | WS_TABSTOP, X, 160, 160, 28, ID_MOD_ADD));
     on_page(S_MODS, mk(L"BUTTON", L"Add mod folder...", BS_PUSHBUTTON | WS_TABSTOP, X + 170, 160, 160, 28, ID_MOD_ADDDIR));
     A.mod_note = label(S_MODS, L"", X, 200, W, 160);
     // ready
     A.ready_text = label(S_READY, L"", X, 156, W, 220);
+}
+
+void fill_gpu_combo() {
+    if (!A.gpus_loaded) { A.gpus = gpulist::enumerate(); A.gpus_loaded = true; }
+    SendMessageW(A.gpu, CB_RESETCONTENT, 0, 0);
+    int best = gpupick::best(A.gpus);
+    std::wstring label = A.gpus.empty() ? L"Automatic (no Vulkan GPU found)"
+                       : L"Automatic (best GPU: " + widen(A.gpus[best < 0 ? 0 : best].name) + L")";
+    SendMessageW(A.gpu, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+    int by_uuid = 0, by_name = 0;
+    for (size_t i = 0; i < A.gpus.size(); i++) {
+        const auto& g = A.gpus[i];
+        std::wstring name = widen(g.name) + L" (" + widen(gpupick::type_name(g.type)) + L", " +
+                            std::to_wstring((g.vram + (512ull << 20)) >> 30) + L" GB)";
+        SendMessageW(A.gpu, CB_ADDSTRING, 0, (LPARAM)name.c_str());
+        if (!by_uuid && !A.prefs.gpu.empty() && gpupick::uuid_hex(g.uuid) == gpupick::lower(A.prefs.gpu)) by_uuid = (int)i + 1;
+        if (!by_name && !A.prefs.gpu_name.empty() && g.name == A.prefs.gpu_name) by_name = (int)i + 1;
+    }
+    int selected = by_uuid ? by_uuid : by_name;
+    A.gpu_missing = -1;
+    if (!selected && (!A.prefs.gpu.empty() || !A.prefs.gpu_name.empty())) {
+        std::wstring name = widen(A.prefs.gpu_name.empty() ? A.prefs.gpu : A.prefs.gpu_name) + L" (saved, not found)";
+        A.gpu_missing = (int)SendMessageW(A.gpu, CB_ADDSTRING, 0, (LPARAM)name.c_str());
+        selected = A.gpu_missing;
+    }
+    SendMessageW(A.gpu, CB_SETCURSEL, selected, 0);
 }
 
 void build_main() {
@@ -472,12 +519,19 @@ void check_game() {
                        L"parent folder holding the separate Base and Update dumps.", kBad);
             return;
         }
+        gameinfo::RpxVerify verified = gameinfo::verify_rpx(p);
+        if (!verified.hash_match) {
+            set_status(L"This game executable does not match the supported v1.5.0 release.", kBad);
+            return;
+        }
         A.game_ok = true;
         A.cfg.game = path;
         set_status(L"Game files look good. Press Next.", kOk);
         return;
     }
     A.dumps = gameinfo::discover_dumps(p);
+    if (A.cfg.no_dlc && A.dumps.needs_merge)
+        gameinfo::validate_dump_pair(A.dumps.base_folder, A.dumps.update_folder, {}, A.dumps.validation_error);
     if (!A.dumps.merged_game.empty()) {
         SetWindowTextW(A.game_edit, A.dumps.merged_game.wstring().c_str());
         check_game();
@@ -488,10 +542,12 @@ void check_game() {
     rows += mark(upd) + L"Update v1.5.0" + (upd ? L": " + A.dumps.update_folder.filename().wstring() : L" not found") + L"\r\n";
     rows += mark(dlc) + (dlc ? L"DLC: " + A.dumps.dlc_folder.filename().wstring() : std::wstring(L"DLC not found (optional)")) + L"\r\n";
     SetWindowTextW(A.game_rows, rows.c_str());
-    if (base && upd) {
+    if (base && upd && A.dumps.ready()) {
         ShowWindow(A.game_merge, SW_SHOW);
         set_status(L"Found separate dumps. Press \"Combine into one game folder\" - it uses hard links on the same "
                    L"drive, so it is quick and takes almost no extra space.", kAccent);
+    } else if (base && upd) {
+        set_status(widen(A.dumps.summary()), kBad);
     } else {
         set_status(L"Could not find the game here. The folder should contain code, content and meta, or the "
                    L"separate Base and Update dumps.", kBad);
@@ -511,6 +567,7 @@ void start_merge() {
     EnableWindow(A.game_merge, FALSE);
     set_status(L"Combining... this can take a minute.", kAccent);
     gameinfo::DumpLayout d = A.dumps;
+    if (A.cfg.no_dlc) d.dlc_folder.clear();
     HWND w = A.wnd;
     std::thread([d, target, w] {
         std::string err;
@@ -583,7 +640,7 @@ void fill_ready() {
     std::wstring s;
     s += L"Game folder:\r\n    " + A.cfg.game + L"\r\n";
     s += L"Saves folder:\r\n    " + A.cfg.user + L"\r\n";
-    s += L"Graphics: " + std::wstring(sc[std::clamp(A.prefs.scale, 1, 3) - 1]) + L", " + std::to_wstring(A.prefs.fps) + L" FPS" + (A.cfg.fullscreen ? L", fullscreen" : L", windowed") + L"\r\n";
+    s += L"Graphics: " + std::wstring(sc[std::clamp(A.prefs.scale, 1, 3) - 1]) + L", " + std::to_wstring(A.prefs.fps) + L" FPS" + (A.cfg.window_mode == 2 ? L", exclusive fullscreen" : A.cfg.window_mode == 1 ? L", borderless fullscreen" : L", windowed") + L"\r\n";
     s += L"Mods: " + std::to_wstring(mods::enabled_count(st)) + L" on\r\n";
     s += A.cfg.exe.empty() ? L"\r\nWarning: BotWRecomp.exe was not found next to the launcher." : L"";
     SetWindowTextW(A.ready_text, s.c_str());
@@ -747,7 +804,16 @@ void enter_step(int s) {
     set_status(L"");
     switch (s) {
     case S_WELCOME: SetWindowTextW(A.page[S_WELCOME][0], welcome_text().c_str()); set_status(L"Press Next to begin."); break;
-    case S_GAME: SetWindowTextW(A.game_edit, A.cfg.game.c_str()); break;
+    case S_GAME:
+        SetWindowTextW(A.game_edit, A.cfg.game.c_str());
+        SendMessageW(A.no_dlc, BM_SETCHECK, A.cfg.no_dlc ? BST_CHECKED : BST_UNCHECKED, 0);
+        {
+            const wchar_t* codes[] = {L"", L"en", L"fr", L"de", L"es", L"it", L"nl", L"ru", L"ja"};
+            int selected = 0;
+            for (int i = 1; i < 9; ++i) if (A.cfg.language == codes[i]) selected = i;
+            SendMessageW(A.language, CB_SETCURSEL, selected, 0);
+        }
+        break;
     case S_BUILD: {
         std::wstring src = A.cfg.source;
         if (!gamebuild::is_source_dir(src)) src = gamebuild::find_source(exe_dir()).wstring();
@@ -771,7 +837,8 @@ void enter_step(int s) {
         if (!A.cfg.setup_done) { A.prefs.scale = recommended_scale(); A.prefs.fps = recommended_fps(); }
         SendMessageW(A.scale, CB_SETCURSEL, std::clamp(A.prefs.scale, 1, 3) - 1, 0);
         SendMessageW(A.fps, CB_SETCURSEL, A.prefs.fps >= 60 ? 1 : 0, 0);
-        SendMessageW(A.fullscreen, BM_SETCHECK, A.cfg.fullscreen ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(A.fullscreen, CB_SETCURSEL, std::clamp(A.cfg.window_mode, 0, 2), 0);
+        fill_gpu_combo();
         set_status(L"Press Next to keep these.", kOk);
         break;
     }
@@ -790,7 +857,7 @@ void refresh_main() {
     mods::State st = mods::load(fs::path(A.cfg.user));
     std::wstring s = (info.has_title_version ? widen(gameinfo::version_name(info.title_version)) : std::wstring(L"version unknown")) +
                      (info.has_dlc ? L"  -  DLC" : L"") + L"  -  " + sc[std::clamp(A.prefs.scale, 1, 3) - 1] + L", " +
-                     std::to_wstring(A.prefs.fps) + L" FPS" + (A.cfg.fullscreen ? L", fullscreen" : L"") + L"  -  " +
+                     std::to_wstring(A.prefs.fps) + L" FPS" + (A.cfg.window_mode ? L", fullscreen" : L"") + L"  -  " +
                      std::to_wstring(mods::enabled_count(st)) + L" mods on" + (A.cfg.no_mods ? L" (mods disabled)" : L"") +
                      L"\r\nSaves: " + A.cfg.user;
     SetWindowTextW(A.main_info, s.c_str());
@@ -829,7 +896,17 @@ void go_next() {
     case S_GFX:
         A.prefs.scale = (int)SendMessageW(A.scale, CB_GETCURSEL, 0, 0) + 1;
         A.prefs.fps = SendMessageW(A.fps, CB_GETCURSEL, 0, 0) == 1 ? 60 : 30;
-        A.cfg.fullscreen = SendMessageW(A.fullscreen, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        A.cfg.window_mode = std::clamp((int)SendMessageW(A.fullscreen, CB_GETCURSEL, 0, 0), 0, 2);
+        {
+            int gpu = (int)SendMessageW(A.gpu, CB_GETCURSEL, 0, 0);
+            if (gpu <= 0) {
+                A.prefs.gpu.clear();
+                A.prefs.gpu_name.clear();
+            } else if (gpu != A.gpu_missing && gpu - 1 < (int)A.gpus.size()) {
+                A.prefs.gpu = gpupick::uuid_hex(A.gpus[gpu - 1].uuid);
+                A.prefs.gpu_name = A.gpus[gpu - 1].name;
+            }
+        }
         break;
     case S_READY: finish_wizard(); return;
     }
@@ -872,9 +949,11 @@ void play() {
     std::wstring cmd = L"\"" + A.cfg.exe + L"\" --game \"" + game + L"\" --renderer vulkan";
     int secs = _wtoi(A.cfg.seconds.c_str());
     if (secs > 0) cmd += L" --seconds " + std::to_wstring(secs);
-    if (A.cfg.fullscreen) cmd += L" --fullscreen";
+    cmd += L" --window-mode " + std::to_wstring(A.cfg.window_mode);
     if (A.cfg.gamepad_view) cmd += L" --gamepad-view";
     if (A.cfg.no_mods) cmd += L" --no-mods";
+    if (A.cfg.no_dlc) cmd += L" --no-dlc";
+    if (!A.cfg.language.empty()) cmd += L" --language " + A.cfg.language;
     std::vector<wchar_t> mc(cmd.begin(), cmd.end());
     mc.push_back(0);
     std::wstring env = build_env(fs::path(A.cfg.user), fs::path(A.cfg.exe));
@@ -893,12 +972,85 @@ void play() {
 
 // ---------- mods window ----------
 HWND g_mods_wnd{}, g_mods_list{};
+HWND g_mod_category{}, g_mod_option{}, g_mod_options_hint{};
 mods::State g_mods;
+bool g_filling_mod_presets = false;
+
+int selected_mod_index() {
+    return g_mods_list ? ListView_GetNextItem(g_mods_list, -1, LVNI_SELECTED) : -1;
+}
+
+void fill_mod_option_choices(int category_index) {
+    if (!g_mod_option) return;
+    g_filling_mod_presets = true;
+    SendMessageW(g_mod_option, CB_RESETCONTENT, 0, 0);
+    int selected = selected_mod_index();
+    if (selected >= 0 && selected < static_cast<int>(g_mods.list.size())) {
+        const auto& mod = g_mods.list[static_cast<size_t>(selected)];
+        if (category_index >= 0 && category_index < static_cast<int>(mod.presets.size())) {
+            const auto& preset = mod.presets[static_cast<size_t>(category_index)];
+            int active = 0;
+            for (size_t i = 0; i < preset.options.size(); ++i) {
+                std::wstring option = widen(preset.options[i]);
+                int row = static_cast<int>(SendMessageW(g_mod_option, CB_ADDSTRING, 0,
+                                                        reinterpret_cast<LPARAM>(option.c_str())));
+                if (preset.options[i] == preset.active) active = row;
+            }
+            if (!preset.options.empty()) SendMessageW(g_mod_option, CB_SETCURSEL, active, 0);
+        }
+    }
+    g_filling_mod_presets = false;
+}
+
+void refresh_mod_preset_controls() {
+    if (!g_mod_category || !g_mod_option || !g_mod_options_hint) return;
+    g_filling_mod_presets = true;
+    SendMessageW(g_mod_category, CB_RESETCONTENT, 0, 0);
+    int selected = selected_mod_index();
+    const mods::Mod* mod = selected >= 0 && selected < static_cast<int>(g_mods.list.size())
+                               ? &g_mods.list[static_cast<size_t>(selected)] : nullptr;
+    bool has_options = mod && !mod->presets.empty();
+    ShowWindow(g_mod_category, has_options ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_mod_option, has_options ? SW_SHOW : SW_HIDE);
+    if (!has_options) {
+        SetWindowTextW(g_mod_options_hint, mod ? L"This mod has no configurable options." : L"Select a mod to view its options.");
+        SendMessageW(g_mod_option, CB_RESETCONTENT, 0, 0);
+        g_filling_mod_presets = false;
+        return;
+    }
+
+    for (size_t i = 0; i < mod->presets.size(); ++i) {
+        std::wstring category = mod->presets[i].category.empty() ? L"Preset" : widen(mod->presets[i].category);
+        int row = static_cast<int>(SendMessageW(g_mod_category, CB_ADDSTRING, 0,
+                                                reinterpret_cast<LPARAM>(category.c_str())));
+        SendMessageW(g_mod_category, CB_SETITEMDATA, row, static_cast<LPARAM>(i));
+    }
+    SendMessageW(g_mod_category, CB_SETCURSEL, 0, 0);
+    std::wstring hint = L"Options for " + widen(mod->name) + L". Choices are saved with this window.";
+    SetWindowTextW(g_mod_options_hint, hint.c_str());
+    g_filling_mod_presets = false;
+    fill_mod_option_choices(0);
+}
 
 LRESULT CALLBACK mods_proc(HWND w, UINT m, WPARAM wp, LPARAM lp) {
     switch (m) {
     case WM_COMMAND:
-        if (LOWORD(wp) == ID_MODSAVE) {
+        if (LOWORD(wp) == ID_MOD_CATEGORY && HIWORD(wp) == CBN_SELCHANGE && !g_filling_mod_presets) {
+            int row = static_cast<int>(SendMessageW(g_mod_category, CB_GETCURSEL, 0, 0));
+            int category = row < 0 ? -1 : static_cast<int>(SendMessageW(g_mod_category, CB_GETITEMDATA, row, 0));
+            fill_mod_option_choices(category);
+        } else if (LOWORD(wp) == ID_MOD_OPTION && HIWORD(wp) == CBN_SELCHANGE && !g_filling_mod_presets) {
+            int selected = selected_mod_index();
+            int category_row = static_cast<int>(SendMessageW(g_mod_category, CB_GETCURSEL, 0, 0));
+            int option_row = static_cast<int>(SendMessageW(g_mod_option, CB_GETCURSEL, 0, 0));
+            int category = category_row < 0 ? -1 : static_cast<int>(SendMessageW(g_mod_category, CB_GETITEMDATA, category_row, 0));
+            if (selected >= 0 && selected < static_cast<int>(g_mods.list.size()) && category >= 0 &&
+                category < static_cast<int>(g_mods.list[static_cast<size_t>(selected)].presets.size())) {
+                auto& preset = g_mods.list[static_cast<size_t>(selected)].presets[static_cast<size_t>(category)];
+                if (option_row >= 0 && option_row < static_cast<int>(preset.options.size()))
+                    preset.active = preset.options[static_cast<size_t>(option_row)];
+            }
+        } else if (LOWORD(wp) == ID_MODSAVE) {
             for (size_t i = 0; i < g_mods.list.size(); i++) g_mods.list[i].enabled = ListView_GetCheckState(g_mods_list, (int)i) != 0;
             std::string err;
             if (!mods::save(fs::path(A.cfg.user), g_mods, false, err)) MessageBoxW(w, widen(err).c_str(), kTitle, MB_ICONWARNING);
@@ -911,16 +1063,28 @@ LRESULT CALLBACK mods_proc(HWND w, UINT m, WPARAM wp, LPARAM lp) {
                 if (!mods::install_mod(fs::path(A.cfg.user), fs::path(src), folder, err)) MessageBoxW(w, widen(err).c_str(), kTitle, MB_ICONWARNING);
                 g_mods = mods::load(fs::path(A.cfg.user));
                 ListView_DeleteAllItems(g_mods_list);
+                int installed = -1;
                 for (size_t i = 0; i < g_mods.list.size(); i++) {
                     std::wstring n = widen(g_mods.list[i].name);
                     LVITEMW it{LVIF_TEXT, (int)i};
                     it.pszText = n.data();
                     ListView_InsertItem(g_mods_list, &it);
                     ListView_SetCheckState(g_mods_list, (int)i, g_mods.list[i].enabled);
+                    if (_stricmp(g_mods.list[i].folder.c_str(), folder.c_str()) == 0) installed = static_cast<int>(i);
                 }
+                if (installed >= 0) ListView_SetItemState(g_mods_list, installed, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+                refresh_mod_preset_controls();
             }
         }
         return 0;
+    case WM_NOTIFY: {
+        auto* notification = reinterpret_cast<NMHDR*>(lp);
+        if (notification && notification->hwndFrom == g_mods_list && notification->code == LVN_ITEMCHANGED) {
+            auto* change = reinterpret_cast<NMLISTVIEW*>(lp);
+            if (change->uChanged & LVIF_STATE) refresh_mod_preset_controls();
+        }
+        return 0;
+    }
     case WM_CLOSE: DestroyWindow(w); return 0;
     case WM_DESTROY: EnableWindow(A.wnd, TRUE); SetForegroundWindow(A.wnd); g_mods_wnd = nullptr; refresh_main(); return 0;
     }
@@ -929,7 +1093,7 @@ LRESULT CALLBACK mods_proc(HWND w, UINT m, WPARAM wp, LPARAM lp) {
 
 void show_mods() {
     if (g_mods_wnd) return;
-    RECT r{0, 0, 520, 380};
+    RECT r{0, 0, 620, 430};
     AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU, FALSE);
     g_mods_wnd = CreateWindowExW(WS_EX_DLGMODALFRAME, L"BotWNativeMods", L"Mods", WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
                                  CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, A.wnd, nullptr, A.inst, nullptr);
@@ -938,16 +1102,19 @@ void show_mods() {
         SendMessageW(hh, WM_SETFONT, (WPARAM)A.font, TRUE);
         return hh;
     };
-    c(L"STATIC", L"Tick a mod to turn it on. Mods lower in the list win when two change the same file.", SS_LEFT, 12, 10, 496, 20, 0);
-    g_mods_list = c(WC_LISTVIEWW, L"", WS_BORDER | LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_SINGLESEL, 12, 34, 496, 280, ID_MODLIST);
+    c(L"STATIC", L"Tick a mod to turn it on. Select one to choose its BNP options.", SS_LEFT, 12, 10, 596, 20, 0);
+    g_mods_list = c(WC_LISTVIEWW, L"", WS_BORDER | LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_SINGLESEL, 12, 34, 596, 215, ID_MODLIST);
     ListView_SetExtendedListViewStyle(g_mods_list, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
     LVCOLUMNW col{LVCF_WIDTH};
-    col.cx = 470;
+    col.cx = 570;
     ListView_InsertColumn(g_mods_list, 0, &col);
-    c(L"BUTTON", L"Add archive...", BS_PUSHBUTTON, 12, 330, 110, 28, ID_MOD_ADD);
-    c(L"BUTTON", L"Add folder...", BS_PUSHBUTTON, 128, 330, 110, 28, ID_MOD_ADDDIR);
-    c(L"BUTTON", L"Cancel", BS_PUSHBUTTON, 312, 330, 90, 28, IDCANCEL);
-    c(L"BUTTON", L"Save", BS_DEFPUSHBUTTON, 410, 330, 98, 28, ID_MODSAVE);
+    g_mod_options_hint = c(L"STATIC", L"Select a mod to view its options.", SS_LEFT, 12, 258, 596, 20, ID_MOD_OPTIONS_HINT);
+    g_mod_category = c(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 12, 285, 230, 220, ID_MOD_CATEGORY);
+    g_mod_option = c(WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 252, 285, 356, 220, ID_MOD_OPTION);
+    c(L"BUTTON", L"Add archive...", BS_PUSHBUTTON, 12, 378, 110, 28, ID_MOD_ADD);
+    c(L"BUTTON", L"Add folder...", BS_PUSHBUTTON, 128, 378, 110, 28, ID_MOD_ADDDIR);
+    c(L"BUTTON", L"Cancel", BS_PUSHBUTTON, 412, 378, 90, 28, IDCANCEL);
+    c(L"BUTTON", L"Save", BS_DEFPUSHBUTTON, 510, 378, 98, 28, ID_MODSAVE);
     g_mods = mods::load(fs::path(A.cfg.user));
     for (size_t i = 0; i < g_mods.list.size(); i++) {
         std::wstring n = widen(g_mods.list[i].name);
@@ -956,6 +1123,8 @@ void show_mods() {
         ListView_InsertItem(g_mods_list, &it);
         ListView_SetCheckState(g_mods_list, (int)i, g_mods.list[i].enabled);
     }
+    if (!g_mods.list.empty()) ListView_SetItemState(g_mods_list, 0, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+    refresh_mod_preset_controls();
     EnableWindow(A.wnd, FALSE);
 }
 
@@ -1034,6 +1203,19 @@ LRESULT CALLBACK wnd_proc(HWND w, UINT m, WPARAM wp, LPARAM lp) {
             break;
         }
         case ID_GAME_EDIT: if (HIWORD(wp) == EN_KILLFOCUS) check_game(); break;
+        case ID_NO_DLC:
+            A.cfg.no_dlc = SendMessageW(A.no_dlc, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            save_ini();
+            check_game();
+            break;
+        case ID_LANGUAGE:
+            if (HIWORD(wp) == CBN_SELCHANGE) {
+                const wchar_t* codes[] = {L"", L"en", L"fr", L"de", L"es", L"it", L"nl", L"ru", L"ja"};
+                int selected = (int)SendMessageW(A.language, CB_GETCURSEL, 0, 0);
+                A.cfg.language = selected >= 0 && selected < 9 ? codes[selected] : L"";
+                save_ini();
+            }
+            break;
         case ID_USER_EDIT: if (HIWORD(wp) == EN_KILLFOCUS) check_user(); break;
         case ID_GAME_MERGE: start_merge(); break;
         case ID_SRC_BROWSE: {

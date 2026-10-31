@@ -25,6 +25,7 @@ jobs:
             mingw-w64-ucrt-x86_64-toolchain
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-python
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-vulkan-headers
             mingw-w64-ucrt-x86_64-vulkan-loader
@@ -37,6 +38,16 @@ jobs:
             mingw-w64-ucrt-x86_64-sdl3
             mingw-w64-ucrt-x86_64-glslang
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBOTW_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build --parallel -- -k 0
+      - name: Portable checks
+        run: |
+          ctest --test-dir build --output-on-failure
+          g++ -std=c++20 launcher/launcher_data_test.cpp launcher/game_info.cpp launcher/mods.cpp launcher/setup_wizard.cpp launcher/unzip.cpp -lz -o build/launcher_data_test.exe
+          ./build/launcher_data_test.exe
+          g++ -std=c++20 -Iruntime/src tests/region_test.cpp runtime/src/region.cpp -o build/region_test.exe
+          ./build/region_test.exe
+          g++ -std=c++20 -pthread -Iruntime/include -Iruntime/src tests/swkbd_test.cpp runtime/src/misc/swkbd.cpp -o build/swkbd_test.exe
+          ./build/swkbd_test.exe
+          python tests/test_codegen_overrides.py

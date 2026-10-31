@@ -269,6 +269,16 @@ static void test_index(const fs::path& root) {
     CHECK(mods::list_dir("/vol/content/Actor", items) == mods::ListStatus::NotVolume);
     CHECK(mods::summary() == "Off for this run (--no-mods)");
 
+    mods::init(game.string(), user.string(), true, true, 0x00050000101c9500ull);
+    CHECK(mods::aoc_title_id() == 0x0005000c101c9500ull);
+    mods::init(game.string(), user.string(), true, false);
+    CHECK(!mods::dlc_ready() && !mods::owns_content(0x0010));
+    CHECK(mods::query(aoc + "/0010/Pack/AocMainField.pack").kind == mods::Query::Kind::Missing);
+    CHECK(mods::list_dir(aoc + "/0010", items) == mods::ListStatus::Missing);
+    CHECK(mods::query("/vol/content/Actor/Pack/Link.sbactorpack").kind == mods::Query::Kind::File);
+    mods::reload();
+    CHECK(!mods::dlc_ready() && mods::query(aoc + "/0010/Pack/AocMainField.pack").kind == mods::Query::Kind::Missing);
+
     // No mods.ini: nothing is enabled, but status() still lists discovered mods and set_enabled() updates mods.ini.
     fs::remove(user / "mods.ini");
     mods::init(game.string(), user.string());

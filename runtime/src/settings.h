@@ -18,6 +18,7 @@ struct Settings {
     bool rumble = true;
     int layout = -1;       // -1 automatic per controller, 0 Nintendo positions, 1 Xbox/PlayStation labels
     bool show_fps = false;
+    int window_mode = 0;   // 0 windowed, 1 borderless, 2 exclusive fullscreen
     bool gamepad_view = false;  // show the GamePad screen beside the TV image (F2, Guide button, or the menu)
     int volume = 100;      // percent
 #if TARGET_OS_IOS
@@ -26,6 +27,8 @@ struct Settings {
     int touch = 0;         // on-screen controls: 0 auto (while no controller), 1 on, 2 off
 #endif
     bool touch_hidden = false;  // collapsed to the show/hide button (that button toggles it)
+    std::string gpu;       // Vulkan device UUID (hex) of the chosen GPU; empty = automatic (best GPU)
+    std::string gpu_name;  // its name, used when the UUID is not found
 };
 
 namespace settings {

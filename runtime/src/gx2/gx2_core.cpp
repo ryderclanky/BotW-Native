@@ -13,6 +13,23 @@
 
 thread_local bool g_skip_vsync_wait = false;  // see game/hooks.h
 
+void pace_vblanks(uint32_t interval) {
+    static uint64_t last = 0;
+    uint64_t now = latte::vsync_count();
+    uint64_t target = last + interval;
+    if (last == 0 || now >= target || target - now > interval) {  // first frame, late, or counter jumped
+        last = now;
+        return;
+    }
+    {
+        threads::WaitMark w("vsync pace", 0);
+        threads::CoreHandoff handoff;
+        handoff.yield();
+        latte::wait_vsync_count(target);
+    }
+    last = target;
+}
+
 namespace GX2 {
 uint32 sGX2MainCoreIndex = 1;
 namespace {

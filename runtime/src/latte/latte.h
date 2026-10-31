@@ -73,6 +73,8 @@ uint32_t flips_executed();
 void add_flip_request();
 void wait_for_flip();
 void wait_for_vsync();
+uint64_t vsync_count();
+void wait_vsync_count(uint64_t target);  // until the vblank counter reaches target (200 ms max)
 uint64_t last_flip_time();
 uint64_t last_vsync_time();
 uint32_t swap_interval();

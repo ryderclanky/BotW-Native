@@ -6,11 +6,13 @@
 
 #include <mutex>
 
+#include "utf8_path.h"
+
 int g_log_level = 0;
 static FILE* g_log_file = nullptr;
 static std::recursive_mutex g_log_lock;  // recursive: the watchdog's stack-dump signal handler logs
 
-void log_set_file(const char* path) { g_log_file = fopen(path, "w"); }
+void log_set_file(const char* path) { g_log_file = botw::fopen_utf8(path ? path : "", "w"); }
 
 void log_write(const char* fmt, ...) {
     char buf[4096];

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <set>
 #include <string>
@@ -124,10 +125,8 @@ int stage_index(Stage s) {
 }
 
 bool codegen_complete(const fs::path& source, const std::string& sha1) {
-    std::ifstream in(source / "generated" / kCodegenMarker);
-    std::string line;
-    std::getline(in, line);
-    return !sha1.empty() && line == sha1 && is_file(source / "generated" / "table.cpp");
+    const char* probes = std::getenv("BOTW_PROBES");
+    return gameinfo::codegen_cache_matches(source, sha1, probes ? probes : "");
 }
 
 // --- PE import walk ---
@@ -165,6 +164,20 @@ static std::vector<std::string> pe_imports(const fs::path& file) {
         out.push_back(n);
     }
     return out;
+}
+
+static bool is_system_runtime(const std::string& name) {
+    std::string folded = name;
+    std::transform(folded.begin(), folded.end(), folded.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (folded.rfind("api-ms-win-", 0) == 0 || folded.rfind("ext-ms-win-", 0) == 0 ||
+        folded == "vulkan-1.dll" || folded == "libvulkan-1.dll")
+        return true;
+    wchar_t system_dir[MAX_PATH + 1] = {};
+    UINT n = GetSystemDirectoryW(system_dir, MAX_PATH + 1);
+    if (!n || n >= MAX_PATH + 1) return false;
+    std::error_code ec;
+    return fs::is_regular_file(fs::path(std::wstring(system_dir, n)) / fs::path(name), ec);
 }
 
 // The launcher loads the same MinGW runtime DLLs from its own folder, so
@@ -220,7 +233,11 @@ bool install_with_dlls(const fs::path& exe, const fs::path& dll_dir, const fs::p
             std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c) { return (char)std::tolower(c); });
             if (!seen.insert(low).second) continue;
             fs::path src = dll_dir / n;
-            if (!is_file(src)) continue;  // system DLL
+            if (!is_file(src)) {
+                if (is_system_runtime(n)) continue;
+                err = "required runtime DLL is missing: " + n + " (searched " + narrow(dll_dir.wstring()) + ")";
+                return false;
+            }
             if (!copy_dll(src, dest / n, ec)) { err = "could not copy " + n + ": " + ec.message(); return false; }
             note("copied " + n);
             todo.push_back(src);
@@ -374,7 +391,10 @@ void Runner::work(Options o) {
     gameinfo::RpxVerify v = gameinfo::verify_rpx(o.rpx);
     if (!v.exists) { fail("U-King.rpx was not found in the game folder."); return finish(Stage::Failed); }
     log(v.summary);
-    if (!v.hash_match) log("Note: this U-King.rpx is not the known USA v1.5.0 file; the build may not work.");
+    if (!v.hash_match && !o.dry_run) {
+        fail("U-King.rpx does not match the supported v1.5.0 executable. " + v.summary);
+        return finish(Stage::Failed);
+    }
     percent_ = 100;
     if (cancel_) return finish(Stage::Cancelled);
 
@@ -393,12 +413,22 @@ void Runner::work(Options o) {
     } else {
         std::error_code ec;
         fs::remove(o.source / "generated" / kCodegenMarker, ec);
+        const char* probes_env = std::getenv("BOTW_PROBES");
+        std::string probes = probes_env ? probes_env : "";
+        std::string inputs_before = gameinfo::codegen_fingerprint(o.source, probes);
         if (!run(q(py) + L" -I " + q(o.source / "tools" / "recompile.py") + L" " + q(o.rpx) + L" generated", o.source, o)) {
             if (cancel_) return finish(Stage::Cancelled);
             fail("The recompiler stopped with an error. See the log.");
             return finish(Stage::Failed);
         }
-        std::ofstream(o.source / "generated" / kCodegenMarker) << v.sha1 << "\n";
+        const char* current_probes = std::getenv("BOTW_PROBES");
+        if (!inputs_before.empty() &&
+            inputs_before == gameinfo::codegen_fingerprint(o.source, current_probes ? current_probes : "") &&
+            v.sha1 == gameinfo::sha1_file(o.rpx) && is_file(o.source / "generated" / "table.cpp")) {
+            std::ofstream(o.source / "generated" / kCodegenMarker) << v.sha1 << "\n" << inputs_before << "\n";
+        } else {
+            log("Generation inputs changed or could not be checked; generated code will not be reused.");
+        }
     }
     percent_ = 100;
     if (cancel_) return finish(Stage::Cancelled);
@@ -436,7 +466,7 @@ void Runner::work(Options o) {
             fail(err);
             return finish(Stage::Failed);
         }
-        setupwizard::deploy_runtime_files(o.install_dir, o.tc.ucrt_bin, o.source);
+        setupwizard::deploy_runtime_files(o.install_dir, o.source);
     }
     percent_ = 100;
     finish(Stage::Done);

@@ -54,6 +54,8 @@ struct GamePrefs {
     int layout = -1;             // -1 = Auto, 1 = Xbox, 0 = Nintendo
     bool gamepad_view = false;
     bool gyro = true;
+    std::string gpu;       // Vulkan device UUID (hex); empty = automatic
+    std::string gpu_name;  // shown and used when the UUID is not found
 };
 
 ToolchainStatus inspect_toolchain(const std::filesystem::path& launcher_dir,
@@ -62,9 +64,8 @@ ToolchainStatus inspect_toolchain(const std::filesystem::path& launcher_dir,
 // Parses one stdout/stderr line from tools/recompile.py or cmake/ninja and updates state.
 bool parse_progress_line(const std::string& line, BuildProgress& state);
 
-// Copies SDL3.dll, libwinpthread-1.dll, and gamecontrollerdb.txt beside BotWRecomp.exe if available.
+// Copies the bundled controller database beside BotWRecomp.exe.
 void deploy_runtime_files(const std::filesystem::path& exe_dir,
-                          const std::filesystem::path& msys_bin,
                           const std::filesystem::path& repo_dir);
 
 GamePrefs read_game_prefs(const std::filesystem::path& user_root);

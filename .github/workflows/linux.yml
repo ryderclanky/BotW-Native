@@ -20,9 +20,19 @@ jobs:
             libfmt-dev libboost-dev libglm-dev libssl-dev libpng-dev libzstd-dev zlib1g-dev \
             libasound2-dev libpulse-dev libdbus-1-dev libusb-1.0-0-dev libegl1-mesa-dev libdecor-0-dev libxtst-dev xvfb
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBOTW_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build --parallel
+      - name: Portable checks
+        run: |
+          ctest --test-dir build --output-on-failure
+          g++ -std=c++20 launcher/launcher_data_test.cpp launcher/game_info.cpp launcher/mods.cpp launcher/setup_wizard.cpp launcher/unzip.cpp -lz -o build/launcher_data_test
+          ./build/launcher_data_test
+          g++ -std=c++20 -Iruntime/src tests/region_test.cpp runtime/src/region.cpp -o build/region_test
+          ./build/region_test
+          g++ -std=c++20 -pthread -Iruntime/include -Iruntime/src tests/swkbd_test.cpp runtime/src/misc/swkbd.cpp -o build/swkbd_test
+          ./build/swkbd_test
+          python3 tests/test_codegen_overrides.py
       - name: Vulkan device smoke test
         run: |
           set +e

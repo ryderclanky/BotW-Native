@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <map>
+#include <atomic>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
@@ -18,6 +19,8 @@
 #include "diag.h"
 #include "hle.h"
 #include "thread.h"
+
+std::atomic<bool> g_has_guest_fn_overrides{false};
 
 namespace {
 std::map<std::string, GuestFn>& registry() {
@@ -62,6 +65,7 @@ struct SavedFnOverride {
 };
 std::vector<SavedFnOverride> g_saved_fn_overrides;
 std::unordered_map<uint32_t, uint32_t> g_fn_ret_imms;
+std::unordered_map<uint32_t, uint32_t> g_fn_redirects;
 
 void stub_fn_nop(PPCContext* /*c*/) {}
 void stub_fn_ret_0(PPCContext* c) { c->r[3] = 0; }
@@ -71,6 +75,16 @@ void stub_fn_ret_imm(PPCContext* c) {
     std::shared_lock<std::shared_mutex> l(g_lock);
     auto it = g_fn_ret_imms.find(t_current_dispatch_addr);
     c->r[3] = (it != g_fn_ret_imms.end()) ? it->second : 0u;
+}
+void stub_fn_redirect(PPCContext* c) {
+    uint32_t target = 0;
+    {
+        std::shared_lock<std::shared_mutex> l(g_lock);
+        auto it = g_fn_redirects.find(t_current_dispatch_addr);
+        if (it == g_fn_redirects.end()) return;
+        target = it->second;
+    }
+    rt_call(c, target);
 }
 
 __attribute__((noinline)) GuestFn lookup_slow(uint32_t addr) {
@@ -233,26 +247,43 @@ bool is_function_entry(uint32_t addr) {
 void override_fn_nop(uint32_t addr) {
     if (!is_function_entry(addr)) return;
     std::unique_lock<std::shared_mutex> l(g_lock);
+    g_fn_redirects.erase(addr);
+    g_fn_ret_imms.erase(addr);
     save_and_set_fn_override_locked((addr - mem::kText) >> 2, stub_fn_nop);
+    g_has_guest_fn_overrides.store(true, std::memory_order_release);
 }
 
 void override_fn_ret_imm(uint32_t addr, uint32_t imm) {
     if (!is_function_entry(addr)) return;
     std::unique_lock<std::shared_mutex> l(g_lock);
+    g_fn_redirects.erase(addr);
+    g_fn_ret_imms.erase(addr);
     GuestFn fn = stub_fn_ret_imm;
     if (imm == 0) fn = stub_fn_ret_0;
     else if (imm == 1) fn = stub_fn_ret_1;
     else if (imm == 0xFFFFFFFFu) fn = stub_fn_ret_minus1;
     else g_fn_ret_imms[addr] = imm;
     save_and_set_fn_override_locked((addr - mem::kText) >> 2, fn);
+    g_has_guest_fn_overrides.store(true, std::memory_order_release);
 }
 
 bool redirect_fn(uint32_t addr, uint32_t target) {
-    if (!is_function_entry(addr)) return false;
+    if (!is_function_entry(addr) || addr == target) return false;
     GuestFn target_fn = lookup(target);
     if (!target_fn) return false;
     std::unique_lock<std::shared_mutex> l(g_lock);
-    save_and_set_fn_override_locked((addr - mem::kText) >> 2, target_fn);
+    uint32_t next = target;
+    for (size_t steps = 0; steps <= g_fn_redirects.size(); ++steps) {
+        if (next == addr) return false;
+        auto it = g_fn_redirects.find(next);
+        if (it == g_fn_redirects.end()) break;
+        next = it->second;
+        if (steps == g_fn_redirects.size()) return false;
+    }
+    g_fn_ret_imms.erase(addr);
+    g_fn_redirects[addr] = target;
+    save_and_set_fn_override_locked((addr - mem::kText) >> 2, stub_fn_redirect);
+    g_has_guest_fn_overrides.store(true, std::memory_order_release);
     return true;
 }
 
@@ -268,12 +299,28 @@ void restore_fn_overrides() {
     }
     g_saved_fn_overrides.clear();
     g_fn_ret_imms.clear();
+    g_fn_redirects.clear();
+    g_has_guest_fn_overrides.store(false, std::memory_order_release);
 }
 
 static void trap_unimplemented_thunk(PPCContext* c) {
     rt_trap(c, c->lr, "call to an unimplemented dynamically-loaded export (see thunk name above)");
 }
 }  // namespace dispatch
+
+extern "C" bool rt_try_override(PPCContext* c, uint32_t addr, GuestFn original) {
+    GuestFn selected = nullptr;
+    {
+        std::shared_lock<std::shared_mutex> l(g_lock);
+        uint32_t off = addr - mem::kText;
+        if (g_text_table && off < g_text_span && (addr & 3u) == 0)
+            selected = g_text_table[off >> 2];
+    }
+    if (!selected || selected == original) return false;
+    t_current_dispatch_addr = addr;
+    selected(c);
+    return true;
+}
 
 // ---- guest calls -----------------------------------------------------------------------------
 // Save and restore only the volatile state that a PowerPC EABI callee may clobber (r0, r3..r12,

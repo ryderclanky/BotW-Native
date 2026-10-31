@@ -6,10 +6,10 @@
 // AXOut_update timing) and calls guest callbacks with guest_call. Device remix matrices
 // (AXSetDeviceRemixMatrix) are not imported by BotW and are left out.
 #include <pthread.h>
+#include <SDL3/SDL.h>
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 
 #include "ax.h"
 #include "ax_internal.h"
@@ -907,7 +907,6 @@ namespace snd_core
 	namespace
 	{
 		std::mutex s_istLock;
-		std::condition_variable s_istCond;
 		bool s_istStopRequested = false;
 		bool s_istRunning = false;
 		pthread_t s_istHostThread;
@@ -938,12 +937,45 @@ namespace snd_core
 				if (now - nextFrame >= kTimeout)
 					nextFrame = now; // too far behind (stall, debugger): skip forward
 				auto wakeTime = std::max(nextFrame, lastFrame + kWaitDurationMinimum);
-				if (s_istCond.wait_until(lock, wakeTime, [] { return s_istStopRequested; }))
+				if (wakeTime > now)
+				{
+					auto waitNs = std::chrono::duration_cast<std::chrono::nanoseconds>(wakeTime - now).count();
+					lock.unlock();
+					SDL_DelayPrecise((Uint64)waitNs);
+					lock.lock();
+				}
+				if (s_istStopRequested)
 					break;
 				lock.unlock();
 				lastFrame = clock::now();
+				const bool measure = diag_on();
+				auto workStart = measure ? clock::now() : clock::time_point{};
 				AXIst_GenerateFrame();
 				numProcessedFrames++;
+				if (measure)
+				{
+					static auto reportStart = clock::now();
+					static uint64_t reportFrames = 0;
+					static auto reportWork = clock::duration::zero();
+					static auto maxWork = clock::duration::zero();
+					auto work = clock::now() - workStart;
+					reportFrames++;
+					reportWork += work;
+					maxWork = std::max(maxWork, work);
+					auto elapsed = clock::now() - reportStart;
+					if (elapsed >= std::chrono::seconds(5))
+					{
+						double seconds = std::chrono::duration<double>(elapsed).count();
+						LOG("audio: AX %.1f frames/s, mix avg %.2f ms max %.2f ms",
+						    reportFrames / seconds,
+						    std::chrono::duration<double, std::milli>(reportWork).count() / reportFrames,
+						    std::chrono::duration<double, std::milli>(maxWork).count());
+						reportStart = clock::now();
+						reportFrames = 0;
+						reportWork = clock::duration::zero();
+						maxWork = clock::duration::zero();
+					}
+				}
 				lock.lock();
 			}
 		}
@@ -986,7 +1018,6 @@ namespace snd_core
 			s_istStopRequested = true;
 			s_istRunning = false;
 		}
-		s_istCond.notify_all();
 		if (pthread_equal(pthread_self(), s_istHostThread))
 			pthread_detach(s_istHostThread); // AXQuit from inside an AX callback: the loop exits after this frame
 		else

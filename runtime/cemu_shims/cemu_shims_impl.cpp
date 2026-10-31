@@ -7,6 +7,7 @@
 #include "Cafe/OS/libs/coreinit/coreinit_Time.h"
 #include "WindowSystem.h"
 #include "config/ActiveSettings.h"
+#include "../src/utf8_path.h"
 
 extern "C" uint64_t rt_timebase(void);
 extern std::string g_user_root;
@@ -20,17 +21,17 @@ static GameProfile s_profile;
 GameProfile* g_current_game_profile = &s_profile;
 std::atomic_bool g_isGPUInitFinished = false;
 
-fs::path botw_user_root() { return fs::path(g_user_root); }
+fs::path botw_user_root() { return botw::path_from_utf8(g_user_root); }
 fs::path botw_cache_root() {
     // Cemu's launcher creates these; the Metal shader / pipeline caches are written there
     static bool made = [] {
         std::error_code ec;
-        fs::create_directories(fs::path(g_user_root) / "cache/shaderCache/transferable", ec);
-        fs::create_directories(fs::path(g_user_root) / "cache/shaderCache/precompiled", ec);
+        fs::create_directories(botw::path_from_utf8(g_user_root) / "cache/shaderCache/transferable", ec);
+        fs::create_directories(botw::path_from_utf8(g_user_root) / "cache/shaderCache/precompiled", ec);
         return true;
     }();
     (void)made;
-    return fs::path(g_user_root) / "cache";
+    return botw::path_from_utf8(g_user_root) / "cache";
 }
 bool ActiveSettings::DumpShadersEnabled() { return getenv("BOTW_DUMP_SHADERS") != nullptr; }
 std::string CafeSystem::GetMlcStoragePath(uint64_t) { return g_user_root + "/mlc"; }

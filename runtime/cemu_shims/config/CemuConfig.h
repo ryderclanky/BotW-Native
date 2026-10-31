@@ -36,7 +36,7 @@ struct CemuConfig {
     } overlay;
     GraphicAPI graphic_api = GraphicAPI::kMetal;
     std::array<uint8_t, 16> vk_graphic_device_uuid{};
-    ConfigValue<int> vsync{0};  // 0 immediate, 1 fifo, 2 mailbox, 3 sync-and-limit
+    ConfigValue<int> vsync{1};  // 0 immediate, 1 fifo, 2 mailbox, 3 sync-and-limit
     uint64_t mtl_graphic_device_uuid = 0;
 };
 CemuConfig& GetConfig();

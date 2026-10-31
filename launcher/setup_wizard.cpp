@@ -285,24 +285,14 @@ bool parse_progress_line(const std::string& raw_line, BuildProgress& state) {
     return false;
 }
 
-void deploy_runtime_files(const fs::path& exe_dir, const fs::path& msys_bin, const fs::path& repo_dir) {
+void deploy_runtime_files(const fs::path& exe_dir, const fs::path& repo_dir) {
     if (exe_dir.empty()) return;
     std::error_code ec;
     fs::create_directories(exe_dir, ec);
-    if (!msys_bin.empty()) {
-        const char* dlls[] = {"SDL3.dll", "libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll"};
-        for (const char* dll : dlls) {
-            fs::path src = msys_bin / dll;
-            fs::path dst = exe_dir / dll;
-            if (file_exists(src) && !file_exists(dst)) {
-                fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
-            }
-        }
-    }
     if (!repo_dir.empty()) {
-        fs::path db_src = repo_dir / "tools" / "gamecontrollerdb.txt";
+        fs::path db_src = repo_dir / "runtime" / "gamecontrollerdb.txt";
         fs::path db_dst = exe_dir / "gamecontrollerdb.txt";
-        if (file_exists(db_src) && !file_exists(db_dst)) {
+        if (file_exists(db_src)) {
             fs::copy_file(db_src, db_dst, fs::copy_options::overwrite_existing, ec);
         }
     }
@@ -326,6 +316,8 @@ GamePrefs read_game_prefs(const fs::path& user_root) {
         else if (k == "layout") p.layout = std::clamp(std::atoi(v.c_str()), -1, 1);
         else if (k == "gamepad_view") p.gamepad_view = (v != "0" && v != "false");
         else if (k == "gyro") p.gyro = (v != "0" && v != "false");
+        else if (k == "gpu") p.gpu = v;
+        else if (k == "gpu_name") p.gpu_name = v;
     }
     return p;
 }
@@ -336,7 +328,8 @@ bool write_game_prefs(const fs::path& user_root, const GamePrefs& prefs) {
     fs::create_directories(user_root, ec);
     fs::path path = user_root / "settings.ini";
     std::vector<std::string> lines;
-    bool saw_scale = false, saw_fps = false, saw_layout = false, saw_gpv = false, saw_gyro = false;
+    bool saw_scale = false, saw_fps = false, saw_layout = false, saw_gpv = false, saw_gyro = false, saw_gpu = false,
+         saw_gpu_name = false;
     if (file_exists(path)) {
         std::ifstream in(path);
         std::string line;
@@ -365,6 +358,16 @@ bool write_game_prefs(const fs::path& user_root, const GamePrefs& prefs) {
                     saw_gpv = true;
                     continue;
                 }
+                if (k == "gpu") {
+                    lines.push_back("gpu=" + prefs.gpu);
+                    saw_gpu = true;
+                    continue;
+                }
+                if (k == "gpu_name") {
+                    lines.push_back("gpu_name=" + prefs.gpu_name);
+                    saw_gpu_name = true;
+                    continue;
+                }
                 if (k == "gyro") {
                     lines.push_back(std::string("gyro=") + (prefs.gyro ? "1" : "0"));
                     saw_gyro = true;
@@ -379,6 +382,8 @@ bool write_game_prefs(const fs::path& user_root, const GamePrefs& prefs) {
     if (!saw_layout) lines.push_back("layout=" + std::to_string(prefs.layout));
     if (!saw_gpv) lines.push_back(std::string("gamepad_view=") + (prefs.gamepad_view ? "1" : "0"));
     if (!saw_gyro) lines.push_back(std::string("gyro=") + (prefs.gyro ? "1" : "0"));
+    if (!saw_gpu) lines.push_back("gpu=" + prefs.gpu);
+    if (!saw_gpu_name) lines.push_back("gpu_name=" + prefs.gpu_name);
 
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) return false;

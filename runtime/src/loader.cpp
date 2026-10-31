@@ -8,6 +8,7 @@
 
 #include "guest_table.h"
 #include "hle.h"
+#include "utf8_path.h"
 
 namespace loader {
 namespace {
@@ -45,7 +46,7 @@ uint32_t data_import_addr(const char* lib, const char* name) {
 }
 
 bool load_main(const std::string& path) {
-    FILE* f = fopen(path.c_str(), "rb");
+    FILE* f = botw::fopen_utf8(path, "rb");
     if (!f) {
         LOG("loader: cannot open %s", path.c_str());
         return false;

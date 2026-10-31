@@ -19,6 +19,7 @@
 #include "../log.h"
 #include "../mem.h"
 #include "../os.h"
+#include "../utf8_path.h"
 #include "gpu_native.h"
 #include "pm4.h"
 
@@ -453,7 +454,7 @@ void walk(Stats& s, uint32_t addr, uint32_t ndw, int depth) {
                 }
                 if (dumped_frame) {
                     std::string path = g_user_root + fmt_s("/gpu_frame_%llu.txt", (unsigned long long)s.frame - 1);
-                    if (FILE* df = fopen(path.c_str(), "w")) {
+                    if (FILE* df = botw::fopen_utf8(path, "w")) {
                         for (auto& l : s.dump) fprintf(df, "%s\n", l.c_str());
                         fclose(df);
                     }
@@ -482,7 +483,7 @@ void dump_hist(FILE* f, const char* title, const Hist<K>& h, const char* hexfmt 
 
 void write_report(Stats& s) {
     std::string path = g_user_root + "/gpu_stats.txt";
-    FILE* f = fopen(path.c_str(), "w");
+    FILE* f = botw::fopen_utf8(path, "w");
     if (!f) return;
     const Frame& t = s.total;
     uint64_t draws = t.draws_top + t.draws_dl;

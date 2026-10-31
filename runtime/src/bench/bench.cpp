@@ -23,6 +23,7 @@
 #include "../log.h"
 #include "../os.h"
 #include "../thread.h"
+#include "../utf8_path.h"
 
 extern std::atomic<pthread_t> g_gpu_thread;
 void LatteTiming_setCustomVsyncFrequency(int32_t frequency);
@@ -124,7 +125,7 @@ void stop_profiler() {
     g_prof_run = false;
     if (g_prof_thread.joinable()) g_prof_thread.join();
     std::string path = g_user_root + "/bench_profile.txt";
-    FILE* f = fopen(path.c_str(), "w");
+    FILE* f = botw::fopen_utf8(path, "w");
     if (!f) return;
     fprintf(f, "ticks=%llu\n", (unsigned long long)g_prof_ticks);
     std::vector<std::pair<uint64_t, std::string>> mods;
@@ -193,7 +194,7 @@ void write_report(bool timed_out) {
         g_opt.uncap_hz);
 
     std::string path = g_user_root + "/bench.txt";
-    FILE* f = fopen(path.c_str(), "w");
+    FILE* f = botw::fopen_utf8(path, "w");
     if (!f) return;
     fprintf(f, "status=%s\n", timed_out ? "timeout" : "ok");
     fprintf(f, "seconds=%d\n", g_opt.seconds);

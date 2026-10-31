@@ -9,8 +9,9 @@ not a full-game release.
 
 ## What works
 
-Tested on a recent NVIDIA laptop GPU, from a USA v208 (1.5.0) game folder, at about
-60 fps:
+Tested on a recent NVIDIA laptop GPU with a USA v208 (1.5.0) game folder at about 60 fps.
+An extracted Europe v208 dump, including DLC, was also verified through startup and the title
+scene; Europe gameplay has not had a full play-through yet.
 
 - the opening
 - audio
@@ -37,9 +38,10 @@ Not working or not confirmed yet:
   a recent NVIDIA laptop GPU.
 - [MSYS2](https://www.msys2.org/) with the **UCRT64** environment. The Cafe runtime uses
   pthreads, so the build is MinGW gcc. MSVC and clang-cl are not supported.
-- Your own legally obtained **Breath of the Wild for Wii U, USA, with update v208 (1.5.0)**,
+- Your own legally obtained **Breath of the Wild for Wii U, USA or Europe, with update v208 (1.5.0)**,
   as an already-extracted game folder. The recompiler and the game patches match that
-  executable. The folder has three directories in it:
+  executable. Base game, update, and optional DLC must come from the same region. The folder
+  has three directories in it:
 
   ```text
   game/
@@ -113,16 +115,22 @@ The window title is **BotW Recompiled (Windows)**. The first log line is
 `BotW Recompiled for Windows (Vulkan)`.
 
 Mods: put file replacement mods in `%APPDATA%\BotWRecomp\mods` and enable them in `mods.ini`.
-`--no-mods` skips them for one run. See [`docs/mods.md`](docs/mods.md). This is untested in game so far.
+Both launchers support BNP preset choices. `--no-mods` skips mods for one run. See
+[`docs/mods.md`](docs/mods.md). Runtime replacement calls and preset selection have automated
+coverage; a long modded game session has not been checked.
 
 Useful flags: `--fps 30` for the game's original pace (60 is the default), `--scale 1` for
 1280×720, `--display fit|stretch|fill`, `--no-gyro`, `--gamepad-view`, `--mute`. `--renderer vulkan` is the
 only choice on Windows. Leave `--trace` and `--trace-hle` off for a normal run.
 
+`--no-dlc` hides add-on content for this run. The launcher also offers **Launch without DLC**.
+Use `--language en|fr|de|es|it|nl|ru|ja` to select a language present in the game files, or choose
+one in the launcher. The default uses an available language for the detected region.
+
 ## Controls
 
-On this build, **E = A**, **Left Shift = B**, and **Enter = Plus**. A full keyboard and
-gamepad map for every GamePad button and both sticks is coming in the next update.
+On this build, **E = A**, **Left Shift = B**, and **Enter = Plus**. The runtime log lists the
+keyboard and gamepad controls.
 
 F1 opens the settings menu. F11 toggles fullscreen.
 
@@ -150,12 +158,13 @@ centered, and `--display` does not apply. Vulkan renderer only.
 - **First-run shaders.** Pipelines compile on first use, so the first time through a scene
   hitches. Later runs use the cache under `%APPDATA%\BotWRecomp`.
 - **A few cutscenes stay at 30 fps** on purpose. Gameplay runs at about 60 fps.
-- **Audio** is not working yet.
-- **Effects, controller mapping, cutscene text.** Some effects, parts of the controller
-  mapping, and some cutscene text are unconfirmed or incomplete.
+- **Effects, controller mapping, cutscene text.** Some effects and parts of the controller
+  mapping remain unconfirmed. Text and Link rendered in local gameplay checks, but some
+  reported cutscene cases have not been reproduced here.
 - **Coverage.** Only the areas listed under [What works](#what-works) were checked. A long
-  open-world session is not part of that result. DLC is untested.
-- **Linux.** The Vulkan backend configures and compiles. Without game files the process
+  open-world session is not part of that result. DLC reached the Europe title scene, but DLC
+  gameplay has not been checked.
+- **Linux.** The Vulkan backend has a CI build and headless device check. Without game files the process
   brings up a device and swapchain, presents one empty frame, and exits. A full Linux
   play-through is not what was verified.
 - **macOS and iOS.** Metal is the original backend, from upstream BotW Recompiled, and it

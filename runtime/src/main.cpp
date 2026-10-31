@@ -18,14 +18,17 @@
 #include <exception>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "bench/bench.h"
 #include "coreinit/mods.h"
 #include "hle.h"
 #include "loader.h"
 #include "os.h"
+#include "region.h"
 #include "settings.h"
 #include "thread.h"
+#include "utf8_path.h"
 #include "host/window.h"
 #include "latte/latte.h"
 
@@ -41,7 +44,7 @@ uint64_t g_trace_from = 0, g_trace_to = 0;  // --trace-frames A-B: HLE call trac
 
 static std::string default_user_root() {
 #if defined(_WIN32)
-    if (const char* appdata = getenv("APPDATA"); appdata && appdata[0]) return std::string(appdata) + "\\BotWRecomp";
+    if (std::string appdata = botw::getenv_utf8(L"APPDATA"); !appdata.empty()) return appdata + "\\BotWRecomp";
     return "BotWRecomp";
 #elif defined(__APPLE__)
     const char* home = getenv("HOME");
@@ -124,16 +127,40 @@ static void on_fault(int sig, siginfo_t* si, void* uctx) {
 }
 #endif
 
+#if defined(_WIN32)
+extern "C" {
+__declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+    // The launcher creates the process with a UTF-16 command line. The CRT's
+    // narrow argv conversion uses the active Windows code page and can replace
+    // characters in a game folder with '?'. Keep paths as UTF-8 from this point.
+    std::vector<std::string> utf8_args = botw::command_line_utf8();
+    std::vector<char*> utf8_argv;
+    if (!utf8_args.empty()) {
+        utf8_argv.reserve(utf8_args.size());
+        for (std::string& arg : utf8_args) utf8_argv.push_back(arg.data());
+        argc = static_cast<int>(utf8_argv.size());
+        argv = utf8_argv.data();
+    }
+#endif
 #if defined(__linux__) && defined(ENABLE_VULKAN)
     // Cemu re-execs itself to see whether RADV was built with LLVM. Must run before anything else.
     if (getenv("CEMU_DETECT_RADV") != nullptr) return BreathOfTheWildChildProcessMain();
 #endif
     // saves, caches, logs, settings; BOTW_USER_ROOT lets test runs use their own folder (tools/run.sh)
+#if defined(_WIN32)
+    g_user_root = botw::getenv_utf8(L"BOTW_USER_ROOT");
+#else
     if (const char* e = getenv("BOTW_USER_ROOT")) g_user_root = e;
-    else g_user_root = default_user_root();
+#endif
+    if (g_user_root.empty()) g_user_root = default_user_root();
     std::error_code ec;
-    std::filesystem::create_directories(g_user_root, ec);
+    std::filesystem::create_directories(botw::path_from_utf8(g_user_root), ec);
     log_set_file((g_user_root + "/runtime.log").c_str());
 #if defined(_WIN32)
     LOG("BotW Recompiled for Windows (Vulkan)");
@@ -147,19 +174,26 @@ int main(int argc, char** argv) {
 
     int capture_every = 0;
     bool use_mods = true;
+    bool use_dlc = true;
+    bool allow_unknown_rpx = false;
+    std::string language;
     bench::Options bench_opt;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--game" && i + 1 < argc) g_game_root = argv[++i];
         else if (a == "--trace") g_log_level = 1;
         else if (a == "--headless") g_headless = true;
-        else if (a == "--fullscreen") window::set_fullscreen(true);
+        else if (a == "--fullscreen") { if (opt.window_mode == 0) opt.window_mode = 1; }
+        else if (a == "--window-mode" && i + 1 < argc) opt.window_mode = std::clamp(atoi(argv[++i]), 0, 2);
         else if (a == "--mute") g_mute = true;
         else if (a == "--capture" && i + 1 < argc) capture_every = atoi(argv[++i]);
         else if (a == "--script" && i + 1 < argc) window::set_script(argv[++i]);
         else if (a == "--trace-hle") g_trace_hle = 1;
         else if (a == "--no-gyro") opt.gyro = false;
         else if (a == "--no-mods") use_mods = false;  // ignore <user>/mods for this run
+        else if (a == "--no-dlc") use_dlc = false;
+        else if (a == "--language" && i + 1 < argc) language = argv[++i];
+        else if (a == "--allow-unknown-rpx") allow_unknown_rpx = true;
         else if (a == "--gamepad-view") opt.gamepad_view = true;  // GamePad screen beside the TV image
         else if (a == "--no-gamepad-view") opt.gamepad_view = false;
         else if (a == "--trace-frames" && i + 1 < argc) sscanf(argv[++i], "%llu-%llu", &g_trace_from, &g_trace_to);
@@ -189,9 +223,27 @@ int main(int argc, char** argv) {
     settings::set(opt, false);  // this run only; the menu saves its changes
     g_render_scale = opt.scale;
     if (g_game_root.empty()) {
+#if defined(_WIN32)
+        g_game_root = botw::getenv_utf8(L"BOTW_GAME");
+#else
         if (const char* e = getenv("BOTW_GAME")) g_game_root = e;
+#endif
     }
-    mods::init(g_game_root, g_user_root, use_mods);  // content mods and DLC (docs/mods.md)
+    if (!g_game_root.empty()) {
+        const std::filesystem::path rpx = botw::path_from_utf8(g_game_root) / "code" / "U-King.rpx";
+        std::error_code file_ec;
+        if (!std::filesystem::is_regular_file(rpx, file_ec)) {
+            std::string rpx_utf8 = botw::path_to_utf8(rpx);
+            LOG("Game executable not found at %s. Check the --game folder.", rpx_utf8.c_str());
+            fprintf(stderr, "Game executable not found at %s. Check the --game folder.\n", rpx_utf8.c_str());
+            return 2;
+        }
+        if (!region::check_rpx(botw::path_to_utf8(rpx), allow_unknown_rpx)) return 3;
+    } else {
+        LOG("No game folder supplied. Use --game <folder> or BOTW_GAME to launch the game.");
+    }
+    region::init(g_game_root, language);
+    mods::init(g_game_root, g_user_root, use_mods, use_dlc, region::get().title_id);
 #if defined(_WIN32)
     if (HMODULE winmm = LoadLibraryA("winmm.dll")) {
         using TimeBeginPeriodFn = UINT(WINAPI*)(UINT);

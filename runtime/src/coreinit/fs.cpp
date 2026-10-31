@@ -1,7 +1,6 @@
 // coreinit FS (synchronous API) and nn_save. Guest paths: /vol/content -> <game>/content,
 // /vol/code -> <game>/code, /vol/save -> <user>/save, /vol/aoc<titleid> -> DLC content.
 // Enabled mods overlay content and aoc (runtime/src/coreinit/mods.cpp). The game dump is not written.
-#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -20,6 +19,7 @@
 #include "diag.h"
 #include "hle.h"
 #include "os.h"
+#include "utf8_path.h"
 
 #include "botw_target.h"
 #if TARGET_OS_IOS  // iOS port: case-insensitive lookup in the game folder (ios/src/fs_case_ios.cpp)
@@ -35,10 +35,11 @@ constexpr uint32_t FLAG_DIR = 0x80000000u, FLAG_FILE = 0x01000000u;
 
 struct Handle {
     FILE* f = nullptr;
-    DIR* d = nullptr;
     std::vector<mods::DirItem> items;
+    std::vector<std::string> host_entries;
     size_t item_at = 0;
     bool listed = false;
+    bool host_listed = false;
     std::string host;
 };
 std::mutex g_fs_lock;
@@ -65,7 +66,8 @@ HostInfo host_info(const std::string& hp) {
     HostInfo info;
 #if defined(_WIN32)
     struct _stat64 st;
-    if (_stat64(hp.c_str(), &st) != 0) {
+    std::filesystem::path native = botw::path_from_utf8(hp);
+    if (_wstat64(native.c_str(), &st) != 0) {
         info.err = errno;
         return info;
     }
@@ -149,8 +151,9 @@ std::string host_path(std::string p) {
 
 void host_mkdir(const char* path) {
 #if defined(_WIN32)
-    // MinGW mkdir takes only the path. EEXIST is fine: parents may already exist.
-    if (_mkdir(path) != 0 && errno != EEXIST) return;
+    // EEXIST is fine: parents may already exist.
+    std::filesystem::path native = botw::path_from_utf8(path);
+    if (_wmkdir(native.c_str()) != 0 && errno != EEXIST) return;
 #else
     if (mkdir(path, 0755) != 0 && errno != EEXIST) return;
 #endif
@@ -169,7 +172,7 @@ void mkdirs(const std::string& p) {
 
 uint32_t add_handle(Handle h) {
     for (size_t i = 1; i < g_handles.size(); i++)
-        if (!g_handles[i].f && !g_handles[i].d && !g_handles[i].listed) {
+        if (!g_handles[i].f && !g_handles[i].listed && !g_handles[i].host_listed) {
             g_handles[i] = h;
             return (uint32_t)i;
         }
@@ -262,7 +265,7 @@ int32_t open_file(PPCContext* c, const std::string& raw, const char* mode, uint3
         info = host_info(hp);
         // A 32-bit stat fails with EOVERFLOW on a large file. fopen can still open it.
         if (!info.ok && reading && info.err == EOVERFLOW) {
-            FILE* probe = fopen(hp.c_str(), "rb");
+            FILE* probe = botw::fopen_utf8(hp, "rb");
             if (probe) {
                 fclose(probe);
                 info.ok = true;
@@ -308,7 +311,8 @@ int32_t open_dir(PPCContext* c, const std::string& raw, uint32_t out, uint32_t m
             diag_fs(gpath.c_str(), "FS opendir miss %s", gpath.c_str());
             return fail(c, FS_NOT_FOUND, mask, "opendir", gpath);
         }
-        diag_fs(gpath.c_str(), "FS opendir merged %s (%zu entries)", gpath.c_str(), items.size());
+        diag_fs(gpath.c_str(), "FS opendir merged %s (%llu entries)", gpath.c_str(),
+                static_cast<unsigned long long>(items.size()));
         Handle opened;
         opened.items = std::move(items);
         opened.listed = true;
@@ -318,15 +322,23 @@ int32_t open_dir(PPCContext* c, const std::string& raw, uint32_t out, uint32_t m
         return FS_OK;
     }
     std::string hp = host_path(gpath);
-    DIR* d = opendir(hp.c_str());
-    if (!d) {
+    std::error_code ec;
+    std::filesystem::directory_iterator it(botw::path_from_utf8(hp), ec), end;
+    if (ec) {
         diag_fs(gpath.c_str(), "FS opendir miss %s host %s errno %d", gpath.c_str(), hp.c_str(), errno);
         return fail(c, FS_NOT_FOUND, mask, "opendir", gpath);
     }
     diag_fs(gpath.c_str(), "FS opendir %s host %s", gpath.c_str(), hp.c_str());
     Handle opened;
-    opened.d = d;
+    opened.host_listed = true;
     opened.host = hp;
+    for (; it != end; it.increment(ec)) {
+        if (ec) break;
+        std::string name = botw::path_to_utf8(it->path().filename());
+        if (name.empty() || name[0] == '.') continue;
+        opened.host_entries.push_back(std::move(name));
+    }
+    if (ec) return fail(c, FS_NOT_FOUND, mask, "opendir", gpath);
     std::lock_guard<std::mutex> l(g_fs_lock);
     mem::w32(out, add_handle(std::move(opened)));
     return FS_OK;
@@ -422,7 +434,8 @@ HLE_EXPORT(coreinit, FSReadFile) {
             int p = 0;
             for (size_t i = 0; i < nb && p < (int)sizeof hex - 4; i++)
                 p += snprintf(hex + p, sizeof hex - p, "%02x", mem::r8(dst + (uint32_t)i));
-            diag_fs(host.c_str(), "FS read %s want %zu got %zu [%s]", host.c_str(), want, n, hex);
+            diag_fs(host.c_str(), "FS read %s want %llu got %llu [%s]", host.c_str(),
+                    static_cast<unsigned long long>(want), static_cast<unsigned long long>(n), hex);
         }
     }
     RET(size ? (uint32_t)(n / size) : 0);
@@ -485,7 +498,7 @@ HLE_EXPORT(coreinit, FSReadDir) {
     uint32_t out = ARG(3);
     std::lock_guard<std::mutex> l(g_fs_lock);
     Handle* h = get(ARG(2));
-    if (!h || (!h->d && !h->listed)) {
+    if (!h || (!h->listed && !h->host_listed)) {
         RET(FS_FATAL);
         return;
     }
@@ -502,33 +515,28 @@ HLE_EXPORT(coreinit, FSReadDir) {
         RET(0);
         return;
     }
-    for (;;) {
-        struct dirent* e = readdir(h->d);
-        if (!e) {
-            RET(FS_END);
-            return;
-        }
-        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || e->d_name[0] == '.') continue;
+    while (h->item_at < h->host_entries.size()) {
+        const std::string& name = h->host_entries[h->item_at++];
 #if defined(_WIN32)
-        std::string full = h->host + "\\" + e->d_name;
+        std::string full = h->host + "\\" + name;
 #else
-        std::string full = h->host + "/" + e->d_name;
+        std::string full = h->host + "/" + name;
 #endif
         HostInfo info = host_info(full);
         if (!info.ok) continue;
         fill_stat(out, info.dir, info.size);
         mem::commit(out + 0x64, 0x80, true);
         memset(mem::host(out + 0x64), 0, 0x80);
-        strncpy((char*)mem::host(out + 0x64), e->d_name, 0x7F);
+        strncpy((char*)mem::host(out + 0x64), name.c_str(), 0x7F);
         RET(0);
         return;
     }
+    RET(FS_END);
 }
 HLE_EXPORT(coreinit, FSCloseDir) {
     std::lock_guard<std::mutex> l(g_fs_lock);
     Handle* h = get(ARG(2));
-    if (h && (h->d || h->listed)) {
-        if (h->d) closedir(h->d);
+    if (h && (h->listed || h->host_listed)) {
         *h = Handle{};
     }
     RET(0);
@@ -597,7 +605,13 @@ static int32_t remove_path(PPCContext* c, const std::string& raw, uint32_t mask)
     std::string hp = host_path(gpath);
     HostInfo info = host_info(hp);
     if (!info.ok) return fail(c, FS_NOT_FOUND, mask, "remove", gpath);
+#if defined(_WIN32)
+    std::filesystem::path native = botw::path_from_utf8(hp);
+    if ((info.dir ? _wrmdir(native.c_str()) : _wremove(native.c_str())) != 0)
+        return fail(c, FS_PERMISSION, mask, "remove", gpath);
+#else
     if ((info.dir ? rmdir(hp.c_str()) : unlink(hp.c_str())) != 0) return fail(c, FS_PERMISSION, mask, "remove", gpath);
+#endif
     TRACE("FS remove %s", gpath.c_str());
     return FS_OK;
 }

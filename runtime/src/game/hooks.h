@@ -10,3 +10,6 @@
 
 // The calling thread's next GX2WaitForVsync returns immediately.
 extern thread_local bool g_skip_vsync_wait;
+// Frame pacing for the 30 fps cap: wait until `interval` vblanks after the last paced frame. A frame
+// that is already late does not wait (shows at the next vblank instead of the one after).
+void pace_vblanks(uint32_t interval);

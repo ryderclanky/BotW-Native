@@ -95,6 +95,7 @@ enum {
     ID_MODS_FOLDER,
     ID_MODS_REFRESH,
     ID_NO_MODS,
+    ID_NO_DLC,
     ID_MOD_PRESET_BASE = 200,
     ID_MOD_PRESET_MAX = 231,
     ID_LOG_TEXT,
@@ -139,10 +140,12 @@ enum {
 };
 
 struct Settings {
-    std::wstring game, exe, user, seconds = L"0", theme = L"auto";
+    std::wstring game, exe, user, seconds = L"0", theme = L"auto", language;
     bool fullscreen = false;
+    int window_mode = 0;
     bool gamepad_view = false;
     bool no_mods = false;
+    bool no_dlc = false;
     bool setup_done = false;
     std::vector<std::string> other;  // lines this version does not know, written back as they were
 };
@@ -334,8 +337,11 @@ void save_launcher_ini() {
     line("user", g.cfg.user);
     line("seconds", g.cfg.seconds);
     line("fullscreen", g.cfg.fullscreen ? L"1" : L"0");
+    line("window_mode", std::to_wstring(g.cfg.window_mode));
     line("gamepad_view", g.cfg.gamepad_view ? L"1" : L"0");
     line("no_mods", g.cfg.no_mods ? L"1" : L"0");
+    line("no_dlc", g.cfg.no_dlc ? L"1" : L"0");
+    line("language", g.cfg.language);
     line("setup_done", g.cfg.setup_done ? L"1" : L"0");
     line("theme", g.cfg.theme);
     for (auto& l : g.cfg.other) out << l << "\n";
@@ -357,9 +363,12 @@ void load_launcher_ini() {
         else if (k == "user") {
             if (!v.empty()) s.user = widen(v);
         } else if (k == "seconds") s.seconds = widen(v);
-        else if (k == "fullscreen") s.fullscreen = v == "1";
+        else if (k == "fullscreen") { s.fullscreen = v == "1"; s.window_mode = s.fullscreen ? 1 : 0; }
+        else if (k == "window_mode") { s.window_mode = std::clamp(atoi(v.c_str()), 0, 2); s.fullscreen = s.window_mode != 0; }
         else if (k == "gamepad_view") { s.gamepad_view = v == "1"; saw_gpv = true; }
         else if (k == "no_mods") s.no_mods = v == "1";
+        else if (k == "no_dlc") s.no_dlc = v == "1";
+        else if (k == "language") s.language = widen(v);
         else if (k == "setup_done") s.setup_done = v == "1";
         else if (k == "theme") s.theme = widen(v);
         else s.other.push_back(line);
@@ -1311,6 +1320,7 @@ struct SettingsWindow : Window {
         g.cfg.user = us;
         g.cfg.seconds = se;
         g.cfg.fullscreen = ui::checked(fullscreen);
+        g.cfg.window_mode = g.cfg.fullscreen ? (g.cfg.window_mode ? g.cfg.window_mode : 1) : 0;
         g.cfg.gamepad_view = ui::checked(gamepad_view);
         write_user_gamepad_view(user_root(), g.cfg.gamepad_view);
         save_launcher_ini();
@@ -1578,7 +1588,7 @@ struct ModsWindow : Window {
         HWND combo = nullptr;
     };
     HWND list = nullptr, install_b = nullptr, toggle_b = nullptr, up_b = nullptr, down_b = nullptr;
-    HWND folder_b = nullptr, refresh_b = nullptr, no_mods = nullptr, close_b = nullptr;
+    HWND folder_b = nullptr, refresh_b = nullptr, no_mods = nullptr, no_dlc = nullptr, close_b = nullptr;
     std::vector<PresetDropdown> preset_combos;
     RECT hint{}, detail_r{}, detail_title_r{}, detail_meta_r{}, detail_desc_r{}, detail_conflict_r{};
     bool filling = false;
@@ -1600,6 +1610,8 @@ struct ModsWindow : Window {
         close_b = ui::button(hwnd, ID_CLOSE, L"Close", ui::Kind::Normal, true);
         no_mods = ui::button(hwnd, ID_NO_MODS, L"Launch without mods", ui::Kind::Check);
         ui::set_checked(no_mods, g.cfg.no_mods);
+        no_dlc = ui::button(hwnd, ID_NO_DLC, L"Launch without DLC", ui::Kind::Check);
+        ui::set_checked(no_dlc, g.cfg.no_dlc);
         DragAcceptFiles(hwnd, TRUE);
         g.mods = mods::load(user_root());
         fill(0);
@@ -1699,6 +1711,7 @@ struct ModsWindow : Window {
         }
 
         MoveWindow(no_mods, m, bottom_check_y, ui::button_width(no_mods), S(24), TRUE);
+        MoveWindow(no_dlc, m + ui::button_width(no_mods) + S(20), bottom_check_y, ui::button_width(no_dlc), S(24), TRUE);
         int by = h - S(bar) + (S(bar) - field) / 2;
         place_row({install_b, toggle_b, up_b, down_b}, m, by, field, gap);
         place_row_right({close_b, refresh_b, folder_b}, w - m, by, field, S(4));
@@ -1889,6 +1902,10 @@ struct ModsWindow : Window {
                 g.cfg.no_mods = ui::checked(no_mods);
                 save_launcher_ini();
                 update_play_button();
+                break;
+            case ID_NO_DLC:
+                g.cfg.no_dlc = ui::checked(no_dlc);
+                save_launcher_ini();
                 break;
             case ID_CLOSE: close(); break;
             default: break;
@@ -2470,14 +2487,14 @@ struct SetupWizardWindow : Window {
             std::wstring sha_line = L"U-King.rpx SHA-1: ";
             if (!rpx_ver.sha1.empty()) {
                 sha_line += widen(rpx_ver.sha1);
-                sha_line += (rpx_ver.hash_match || rpx_ver.meta_usa_v208) ? L"  (Verified USA v208)" : L"  (Hash mismatch)";
+                sha_line += rpx_ver.hash_match ? L"  (Verified v208)" : L"  (Hash mismatch)";
             } else {
                 sha_line += L"not checked";
             }
             ui::draw_text(dc, sha_line, {tx, iy + S(46), tx + tw, iy + S(66)}, f.mono, ui::pal.muted,
                           DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
-            COLORREF sc = (rpx_ver.hash_match || rpx_ver.meta_usa_v208) ? ui::pal.accent : (ginfo.has_rpx ? ui::pal.warn : ui::pal.muted);
+            COLORREF sc = rpx_ver.hash_match ? ui::pal.accent : (ginfo.has_rpx ? ui::pal.warn : ui::pal.muted);
             ui::draw_text(dc, widen(rpx_ver.summary), {tx, iy + S(70), tx + tw, iy + S(112)}, f.small, sc,
                           DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
         } else if (step == 2) {
@@ -2751,7 +2768,7 @@ struct SetupWizardWindow : Window {
                 prog.overall_percent = 100;
                 prog.phase_text = "Complete: Wii U binary converted to C++ and compiled to BotWRecomp.exe (100%)";
                 log_buf += "\r\n[Success] BotWRecomp.exe is ready.\r\n";
-                setupwizard::deploy_runtime_files(repo / "build", msys, repo);
+                setupwizard::deploy_runtime_files(repo / "build", repo);
             } else {
                 prog.stage = setupwizard::BuildStage::Failed;
                 prog.phase_text = "Build failed. Check the log below for details.";
@@ -2797,6 +2814,8 @@ struct SetupWizardWindow : Window {
         auto root = pick_browse(hwnd, L"Select the parent folder containing your Wii U dump (or Base + Update + DLC folders).", false);
         if (root.empty()) return;
         auto lay = gameinfo::discover_dumps(std::filesystem::path(root));
+        if (g.cfg.no_dlc && lay.needs_merge)
+            gameinfo::validate_dump_pair(lay.base_folder, lay.update_folder, {}, lay.validation_error);
         if (!lay.needs_merge && lay.ready()) {
             separate_mode = false;
             set_text(game_e, lay.merged_game.wstring());
@@ -2821,7 +2840,7 @@ struct SetupWizardWindow : Window {
     }
 
     void on_merge() {
-        std::wstring bp = get_text(base_e), up = get_text(upd_e), dp = get_text(dlc_e);
+        std::wstring bp = get_text(base_e), up = get_text(upd_e), dp = g.cfg.no_dlc ? L"" : get_text(dlc_e);
         if (bp.empty() || up.empty()) {
             alert(L"Select both the Base Game folder (v0) and Update v1.5.0 folder (v208) before merging.");
             return;
@@ -2867,6 +2886,7 @@ struct SetupWizardWindow : Window {
         if (!ga.empty()) g.cfg.game = ga;
         if (tc.has_exe && g.cfg.exe.empty()) g.cfg.exe = tc.exe_path.wstring();
         g.cfg.fullscreen = ui::checked(chk_fs);
+        g.cfg.window_mode = g.cfg.fullscreen ? (g.cfg.window_mode ? g.cfg.window_mode : 1) : 0;
         g.cfg.gamepad_view = ui::checked(chk_gpv);
         g.cfg.setup_done = true;
         prefs.gamepad_view = g.cfg.gamepad_view;
@@ -3090,9 +3110,11 @@ void on_play() {
     if (seconds < 0) seconds = 0;
     std::wstring cmd = L"\"" + exe + L"\" --game \"" + game + L"\" --renderer vulkan";
     if (seconds > 0) cmd += L" --seconds " + std::to_wstring(seconds);
-    if (g.cfg.fullscreen) cmd += L" --fullscreen";
+    cmd += L" --window-mode " + std::to_wstring(g.cfg.window_mode);
     if (g.cfg.gamepad_view) cmd += L" --gamepad-view";
     if (g.cfg.no_mods) cmd += L" --no-mods";
+    if (g.cfg.no_dlc) cmd += L" --no-dlc";
+    if (!g.cfg.language.empty()) cmd += L" --language " + g.cfg.language;
     std::vector<wchar_t> mutable_cmd(cmd.begin(), cmd.end());
     mutable_cmd.push_back(L'\0');
     std::wstring env = build_env(std::filesystem::path(user), std::filesystem::path(exe));

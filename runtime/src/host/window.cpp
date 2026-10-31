@@ -1,4 +1,6 @@
 #include "window.h"
+#include "swkbd_state.h"
+#include "../settings.h"
 
 #include "botw_target.h"
 #include <SDL3/SDL.h>
@@ -20,6 +22,7 @@
 #include "../log.h"
 #include "../os.h"
 #include "../latte/latte.h"
+#include "controller_layout.h"
 
 #include <cstdio>
 
@@ -41,6 +44,9 @@ bool g_use_gyro = true;  // --no-gyro / settings
 bool g_use_rumble = true;
 bool g_background = false;  // iOS app lifecycle
 bool g_start_fullscreen = false;  // --fullscreen
+std::atomic<int> g_window_mode{0};     // wanted mode (settings.ini window_mode)
+std::atomic<bool> g_mode_dirty{false};  // apply on the event loop thread
+int g_applied_mode = -1;
 // -1 auto (per controller family), 0 Nintendo positions, 1 Xbox/PlayStation labels
 int g_layout = -1;
 std::atomic<int> g_draw_w{1280}, g_draw_h{720};
@@ -176,19 +182,34 @@ const char* pad_name(SDL_Gamepad* pad) {
     const char* n = pad ? SDL_GetGamepadName(pad) : nullptr;
     return n ? n : "controller";
 }
-// Wii U A/B/X/Y. Auto follows the label SDL reports for that family (Switch A is
-// the right button, Xbox A and PlayStation Cross are the bottom button).
+// Wii U A/B/X/Y. Auto keeps native positions on PlayStation/Switch and follows
+// SDL labels on Xbox or other controllers; explicit layout preferences override it.
 SDL_GamepadButton wii_face(SDL_Gamepad* pad, int which) {
-    const SDL_GamepadButton nintendo[] = {SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_NORTH,
-                                          SDL_GAMEPAD_BUTTON_WEST};
-    const SDL_GamepadButton labels[] = {SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_WEST,
-                                        SDL_GAMEPAD_BUTTON_NORTH};
-    if (g_layout == 0) return nintendo[which];
-    if (g_layout > 0) return labels[which];
+    const SDL_GamepadType t = pad ? SDL_GetGamepadType(pad) : SDL_GAMEPAD_TYPE_UNKNOWN;
+    const bool nintendo_family = t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO ||
+                                 t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT ||
+                                 t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT ||
+                                 t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR;
+    const bool playstation_family = t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5;
+    const controller_layout::Family family =
+        nintendo_family ? controller_layout::Family::Nintendo
+        : playstation_family ? controller_layout::Family::PlayStation
+        : t == SDL_GAMEPAD_TYPE_XBOX360 || t == SDL_GAMEPAD_TYPE_XBOXONE ? controller_layout::Family::Xbox
+                                                                          : controller_layout::Family::Other;
+    const auto action = static_cast<controller_layout::Action>(which);
+    const controller_layout::Face fixed = controller_layout::fixed_face(g_layout, family, action);
+    switch (fixed) {
+        case controller_layout::Face::South: return SDL_GAMEPAD_BUTTON_SOUTH;
+        case controller_layout::Face::East: return SDL_GAMEPAD_BUTTON_EAST;
+        case controller_layout::Face::West: return SDL_GAMEPAD_BUTTON_WEST;
+        case controller_layout::Face::North: return SDL_GAMEPAD_BUTTON_NORTH;
+        case controller_layout::Face::Unknown: break;
+    }
+
     const SDL_GamepadButton faces[] = {SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_WEST,
                                        SDL_GAMEPAD_BUTTON_NORTH};
     for (SDL_GamepadButton b : faces) {
-        SDL_GamepadButtonLabel lab = SDL_GetGamepadButtonLabel(pad, b);
+        SDL_GamepadButtonLabel lab = pad ? SDL_GetGamepadButtonLabel(pad, b) : SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN;
         bool match = false;
         if (which == 0) match = lab == SDL_GAMEPAD_BUTTON_LABEL_A || lab == SDL_GAMEPAD_BUTTON_LABEL_CROSS;
         else if (which == 1) match = lab == SDL_GAMEPAD_BUTTON_LABEL_B || lab == SDL_GAMEPAD_BUTTON_LABEL_CIRCLE;
@@ -196,10 +217,17 @@ SDL_GamepadButton wii_face(SDL_Gamepad* pad, int which) {
         else match = lab == SDL_GAMEPAD_BUTTON_LABEL_Y || lab == SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE;
         if (match) return b;
     }
-    SDL_GamepadType t = pad ? SDL_GetGamepadType(pad) : SDL_GAMEPAD_TYPE_UNKNOWN;
-    bool nintendo_family = t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT ||
-                           t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT || t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR;
-    return nintendo_family ? nintendo[which] : labels[which];
+    switch (controller_layout::fixed_face(0, family, action)) {
+        case controller_layout::Face::South: return SDL_GAMEPAD_BUTTON_SOUTH;
+        case controller_layout::Face::East: return SDL_GAMEPAD_BUTTON_EAST;
+        case controller_layout::Face::West: return SDL_GAMEPAD_BUTTON_WEST;
+        case controller_layout::Face::North: return SDL_GAMEPAD_BUTTON_NORTH;
+        case controller_layout::Face::Unknown: return which == 0 ? SDL_GAMEPAD_BUTTON_SOUTH
+                                                    : which == 1 ? SDL_GAMEPAD_BUTTON_EAST
+                                                    : which == 2 ? SDL_GAMEPAD_BUTTON_WEST
+                                                                 : SDL_GAMEPAD_BUTTON_NORTH;
+    }
+    return SDL_GAMEPAD_BUTTON_SOUTH;
 }
 const char* face_phrase(SDL_Gamepad* pad) {
     SDL_GamepadButton a = wii_face(pad, 0);
@@ -423,6 +451,10 @@ void apply_input() {
             last_y = dy, last_x = dx;
         }
     }
+    if (swkbd::keyboard().view().active) {
+        g_key_pulses.clear();
+        s = input::PadState{};
+    }
     // scripted input
     {
         std::lock_guard<std::mutex> l(g_script_lock);
@@ -478,7 +510,7 @@ void log_controls() {
     LOG("controls: keyboard  E=A  Shift=B  Space=X  F=Y  Q=ZL  R=ZR  1=L  3=R  Enter=Plus  Tab=Minus");
     LOG("controls: keyboard  arrows=D-pad  C=left stick click  V=right stick click  H or Home=Home  G=Sync  T=TV");
     LOG("controls: keyboard  WASD=left stick  J/L=right stick left/right  I/K=right stick up/down  (+Y is up)");
-    const char* layout = g_layout < 0 ? "auto (Switch A on the right, Xbox A / PlayStation Cross on the bottom)"
+    const char* layout = g_layout < 0 ? "auto (BotW positions on PlayStation/Switch; Xbox labels on Xbox)"
                          : g_layout > 0 ? "A = bottom, Cross / Xbox A"
                                         : "A = right, Circle / Xbox B";
     LOG("controls: gamepad face buttons %s", layout);
@@ -535,7 +567,55 @@ void set_rumble(bool on) {
         for (auto& c : g_ctrls) SDL_RumbleGamepad(c.pad, 0, 0, 0);
 }
 void set_layout(int layout) { g_layout = layout; }
-void set_fullscreen(bool on) { g_start_fullscreen = on; }
+void set_fullscreen(bool on) {
+    g_start_fullscreen = on;
+    if (on && g_window_mode == 0) g_window_mode = 1;
+}
+void set_window_mode(int mode) {
+    mode = mode < 0 ? 0 : mode > 2 ? 2 : mode;
+    g_window_mode = mode;
+    g_start_fullscreen = mode != 0;
+    g_mode_dirty = true;
+}
+
+// Event loop thread only (SDL video calls). The swapchain follows on its own: the Vulkan renderer
+// compares the window's pixel size with the swapchain extent every frame (UpdateSwapchainProperties)
+// and recreates it, and VK_ERROR_OUT_OF_DATE_KHR / SUBOPTIMAL (exclusive mode switches) also recreate.
+static void apply_window_mode() {
+    g_mode_dirty = false;
+    int mode = g_window_mode;
+    if (!g_win || g_headless || mode == g_applied_mode) return;
+    if (mode == 2) {
+        // Exclusive: the display's desktop resolution at its highest refresh rate, so the game image
+        // stays 1:1 and the monitor does not have to change resolution unless the driver requires it.
+        SDL_DisplayID d = SDL_GetDisplayForWindow(g_win);
+        const SDL_DisplayMode* desk = SDL_GetDesktopDisplayMode(d);
+        SDL_DisplayMode m{};
+        bool ok = desk && SDL_GetClosestFullscreenDisplayMode(d, desk->w, desk->h, 0.0f, true, &m);
+        if (!ok || !SDL_SetWindowFullscreenMode(g_win, &m)) {
+            LOG("window: exclusive fullscreen unavailable (%s), using borderless", SDL_GetError());
+            SDL_SetWindowFullscreenMode(g_win, nullptr);
+        }
+    } else {
+        SDL_SetWindowFullscreenMode(g_win, nullptr);  // nullptr = borderless desktop fullscreen
+    }
+    if (!SDL_SetWindowFullscreen(g_win, mode != 0)) LOG("window: SDL_SetWindowFullscreen failed: %s", SDL_GetError());
+    SDL_SyncWindow(g_win);
+    g_applied_mode = mode;
+    static const char* kNames[] = {"windowed", "borderless fullscreen", "exclusive fullscreen"};
+    int pw = 0, ph = 0;
+    SDL_GetWindowSizeInPixels(g_win, &pw, &ph);
+    LOG("window: %s, %dx%d pixels", kNames[mode], pw, ph);
+}
+
+// F11 / Alt+Enter: windowed <-> the fullscreen mode chosen in settings (borderless if none).
+static void toggle_window_mode() {
+    Settings s = settings::get();
+    static int last_fs = 1;
+    if (s.window_mode != 0) last_fs = s.window_mode;
+    s.window_mode = s.window_mode != 0 ? 0 : last_fs;
+    settings::set(s, true);  // saved to settings.ini; apply() calls set_window_mode
+}
 
 void display_pixel_size(int* w, int* h) {
     *w = 2560, *h = 1440;
@@ -576,7 +656,8 @@ void create() {
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     flags |= latte::using_vulkan() ? SDL_WINDOW_VULKAN : SDL_WINDOW_METAL;
     if (g_headless) flags |= SDL_WINDOW_HIDDEN;  // tests: render into a hidden window, never on screen
-    else if (g_start_fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
+    // Start windowed; apply_window_mode() below picks borderless or exclusive. Creating the window
+    // with SDL_WINDOW_FULLSCREEN directly would always mean borderless.
 #if defined(_WIN32)
     const char* title = "BotW-Native (Windows)";
 #else
@@ -594,6 +675,12 @@ void create() {
     int pw, ph;
     SDL_GetWindowSize(g_win, &pw, &ph);
     window_attach_renderer(g_win, pw, ph);
+    if (!g_headless && g_window_mode != 0) {
+        apply_window_mode();
+        SDL_GetWindowSizeInPixels(g_win, &w, &h);
+        g_draw_w = w;
+        g_draw_h = h;
+    }
     LOG("window \"%s\" %dx%d (%dx%d pixels)%s%s, renderer %s", title, pw, ph, w, h, g_headless ? ", hidden" : "",
         g_start_fullscreen && !g_headless ? ", fullscreen" : "", latte::using_vulkan() ? "vulkan" : "metal");
     // A game text box is not an OS text field. Leave SDL text input off so it cannot eat keys.
@@ -624,6 +711,17 @@ void run() {
                 int ci = find_ctrl(e.gbutton.which);
                 SDL_Gamepad* pad = ci >= 0 ? g_ctrls[ci].pad : nullptr;
                 auto b = (SDL_GamepadButton)e.gbutton.button;
+                if (swkbd::keyboard().view().active) {
+                    if (b == SDL_GAMEPAD_BUTTON_DPAD_UP) swkbd::keyboard().move(0, -1);
+                    else if (b == SDL_GAMEPAD_BUTTON_DPAD_DOWN) swkbd::keyboard().move(0, 1);
+                    else if (b == SDL_GAMEPAD_BUTTON_DPAD_LEFT) swkbd::keyboard().move(-1, 0);
+                    else if (b == SDL_GAMEPAD_BUTTON_DPAD_RIGHT) swkbd::keyboard().move(1, 0);
+                    else if (b == SDL_GAMEPAD_BUTTON_SOUTH) swkbd::keyboard().select(swkbd::keyboard().view().selected);
+                    else if (b == SDL_GAMEPAD_BUTTON_WEST) swkbd::keyboard().backspace();
+                    else if (b == SDL_GAMEPAD_BUTTON_EAST) swkbd::keyboard().cancel();
+                    else if (b == SDL_GAMEPAD_BUTTON_START) swkbd::keyboard().accept();
+                    continue;
+                }
                 bool both_sticks = pad && ((b == SDL_GAMEPAD_BUTTON_LEFT_STICK && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_STICK)) ||
                                            (b == SDL_GAMEPAD_BUTTON_RIGHT_STICK && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_STICK)));
                 // The menu uses the physical positions, whatever the in-game button layout is: the bottom
@@ -645,16 +743,27 @@ void run() {
             } else if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
                 if (e.gaxis.value > kTriggerOn || e.gaxis.value < -kTriggerOn) note_used(e.gaxis.which);
             } else if (e.type == SDL_EVENT_TEXT_INPUT && g_win) {
-                SDL_StopTextInput(g_win);
+                if (swkbd::keyboard().view().active) swkbd::keyboard().input(e.text.text);
+                else SDL_StopTextInput(g_win);
             } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
+                if (swkbd::keyboard().view().active) {
+                    if (e.key.key == SDLK_BACKSPACE) swkbd::keyboard().backspace();
+                    else if (e.key.key == SDLK_RETURN) swkbd::keyboard().accept();
+                    else if (e.key.key == SDLK_ESCAPE) swkbd::keyboard().cancel();
+                    else if (e.key.key == SDLK_UP) swkbd::keyboard().move(0, -1);
+                    else if (e.key.key == SDLK_DOWN) swkbd::keyboard().move(0, 1);
+                    else if (e.key.key == SDLK_LEFT) swkbd::keyboard().move(-1, 0);
+                    else if (e.key.key == SDLK_RIGHT) swkbd::keyboard().move(1, 0);
+                    continue;
+                }
                 // Record the press before the menu toggle. A tap of E can be down and
                 // up inside one poll; the pulse keeps it visible to the next VPADRead.
                 note_key_down(e.key.scancode);
                 if (e.key.key == SDLK_F1) menu::toggle();
                 else if (e.key.key == SDLK_F2) toggle_gamepad_view();
-                else if (e.key.key == SDLK_F11 && g_win) {
-                    bool fs = SDL_GetWindowFlags(g_win) & SDL_WINDOW_FULLSCREEN;
-                    SDL_SetWindowFullscreen(g_win, !fs);
+                else if ((e.key.key == SDLK_F11 ||
+                          (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))) && g_win) {
+                    toggle_window_mode();
                 } else if (menu::is_open()) {
                     switch (e.key.key) {
                         case SDLK_ESCAPE: menu::close(); break;
@@ -690,13 +799,19 @@ void run() {
                 SDL_GetWindowSize(g_win, &pw, &ph);
                 latte::resize_window(pw, ph);
                 update_safe_area();
+            } else if (e.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED && g_applied_mode == 2) {
+                g_applied_mode = -1;  // moved to another monitor: pick that display's mode
+                g_mode_dirty = true;
             } else if (e.type == SDL_EVENT_WINDOW_SAFE_AREA_CHANGED) {
                 update_safe_area();
             }
         }
+        if (g_mode_dirty) apply_window_mode();
         // A game text box is not an OS field. If text input turns on, key events
         // can stop updating the keyboard state the game is sampled from.
-        if (g_win && SDL_TextInputActive(g_win)) {
+        bool keyboard_active = swkbd::keyboard().view().active;
+        if (g_win && keyboard_active && !SDL_TextInputActive(g_win)) SDL_StartTextInput(g_win);
+        if (g_win && !keyboard_active && SDL_TextInputActive(g_win)) {
             SDL_StopTextInput(g_win);
             static bool logged = false;
             if (!logged) {

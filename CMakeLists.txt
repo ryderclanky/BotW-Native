@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
+if(POLICY CMP0207)
+  cmake_policy(SET CMP0207 NEW)
+endif()
 
 # APPLE is not set until project(), so pick languages from the host.
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
@@ -10,6 +13,25 @@ endif()
 project(BotWRecomp
   DESCRIPTION "Breath of the Wild recompiled for Windows and Linux (Vulkan)"
   LANGUAGES C CXX)
+
+if(WIN32 AND MINGW)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  get_filename_component(_botw_mingw_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+  if(CMAKE_OBJDUMP)
+    set(_botw_objdump "${CMAKE_OBJDUMP}")
+  else()
+    find_program(_botw_objdump NAMES objdump HINTS "${_botw_mingw_bin}" REQUIRED)
+  endif()
+  function(botw_deploy_windows_runtime target)
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/cmake/deploy_windows_runtime.py"
+              --binary "$<TARGET_FILE:${target}>"
+              --objdump "${_botw_objdump}"
+              --search-dir "${_botw_mingw_bin}"
+      COMMENT "Deploying runtime DLL dependencies for ${target}"
+      VERBATIM)
+  endfunction()
+endif()
 
 # Build speed helpers, both optional. ccache only helps rebuilds (a first build is always a
 # cache miss), so it is used when it is installed and otherwise ignored.
@@ -292,6 +314,9 @@ add_custom_command(TARGET BotWRecomp POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
           "${_botw_controller_db}" "$<TARGET_FILE_DIR:BotWRecomp>/gamecontrollerdb.txt"
   VERBATIM)
+if(WIN32 AND MINGW)
+  botw_deploy_windows_runtime(BotWRecomp)
+endif()
 
 set(_botw_glslang "")
 if(BOTW_ENABLE_VULKAN)
@@ -351,7 +376,7 @@ if(WIN32)
   # `#pragma comment(lib, "ntdll.lib")` is MSVC-only; gcc ignores it, so this
   # link is what resolves the symbol. The Windows CI job links SystemInfoWin.cpp
   # into this executable and fails if ntdll is dropped.
-  target_link_libraries(BotWRecomp PRIVATE psapi ntdll mfplat mfuuid ole32)
+  target_link_libraries(BotWRecomp PRIVATE psapi ntdll mfplat mfuuid ole32 shell32)
 endif()
 if(APPLE)
   target_link_libraries(BotWRecomp PRIVATE
@@ -373,6 +398,7 @@ if(WIN32)
     launcher/game_build.cpp
     launcher/game_info.cpp
     launcher/mods.cpp
+    launcher/gpu_list.cpp
     launcher/setup_wizard.cpp
     launcher/unzip.cpp
     "${CMAKE_BINARY_DIR}/botw_launcher_manifest.rc")
@@ -400,10 +426,11 @@ if(WIN32)
     if(MINGW)
       # GUI subsystem, but the entry point stays main() so SDL_main is not required.
       target_link_options(${_tgt} PRIVATE "-Wl,-e,mainCRTStartup")
+      botw_deploy_windows_runtime(${_tgt})
     endif()
   endforeach()
   file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/BotWLauncher.cmd" CONTENT
-    "@echo off\r\nset \"PATH=C:\\msys64\\ucrt64\\bin;%PATH%\"\r\nstart \"\" \"%~dp0BotWLauncher.exe\"\r\n")
+    "@echo off\r\nstart \"\" \"%~dp0BotWLauncher.exe\"\r\n")
   message(STATUS "BotWLauncher: Windows launcher (BotWLauncher.exe)")
 
   add_executable(BotWNativeSetup WIN32
@@ -426,13 +453,22 @@ message(STATUS "BotWRecomp backends: Metal=${BOTW_ENABLE_METAL} Vulkan=${BOTW_EN
 include(${CMAKE_SOURCE_DIR}/runtime/src/gpu_native/gpu_native.cmake OPTIONAL)
 
 # Unit test for the mod file index (docs/mods.md). Off by default.
-option(BOTW_BUILD_TESTS "Build the BotWModTests unit test" OFF)
+option(BOTW_BUILD_TESTS "Build the runtime unit tests" OFF)
 if(BOTW_BUILD_TESTS)
   add_executable(BotWModTests tests/mods_test.cpp runtime/src/coreinit/mods.cpp runtime/src/log.cpp)
   target_include_directories(BotWModTests PRIVATE runtime/src)
   target_link_libraries(BotWModTests PRIVATE ZLIB::ZLIB)
   enable_testing()
   add_test(NAME mods COMMAND BotWModTests)
+  add_executable(BotWGpuPickTests tests/gpu_pick_test.cpp)
+  target_include_directories(BotWGpuPickTests PRIVATE runtime/cemu_shims)
+  add_test(NAME gpu_pick COMMAND BotWGpuPickTests)
+  add_executable(BotWUtf8PathTests tests/utf8_path_test.cpp)
+  target_include_directories(BotWUtf8PathTests PRIVATE runtime/src)
+  add_test(NAME utf8_path COMMAND BotWUtf8PathTests)
+  add_executable(BotWControllerLayoutTests tests/controller_layout_test.cpp)
+  target_include_directories(BotWControllerLayoutTests PRIVATE runtime/src)
+  add_test(NAME controller_layout COMMAND BotWControllerLayoutTests)
 endif()
 
 # Release package: `cmake --build <build> --target botw_package` (or

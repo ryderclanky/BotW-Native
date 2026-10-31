@@ -29,6 +29,7 @@ enum RowId {
     kLayout,
     kTouch,
     kShowFps,
+    kWindowMode,
     kMods,
     kVolume,
     kModReload,
@@ -43,7 +44,7 @@ enum TabId { kTabGraphics, kTabControls, kTabAudio, kTabMods, kTabAbout, kTabs }
 const char* kTabNames[kTabs] = {"Graphics", "Controls", "Audio", "Mods", "About"};
 constexpr int kModRowBase = 1000;
 const std::vector<int>& tab_rows(int t) {
-    static const std::vector<int> graphics = {kFps, kScale, kDisplay, kFilter, kGamepadView, kShowFps, kMods};
+    static const std::vector<int> graphics = {kFps, kWindowMode, kScale, kDisplay, kFilter, kGamepadView, kShowFps, kMods};
     static const std::vector<int> controls = {kGyro, kRumble, kLayout, kTouch};
     static const std::vector<int> audio = {kVolume};
     static const std::vector<int> about;
@@ -111,6 +112,7 @@ void step(Settings& s, int row, int dir) {
         }
         case kTouch: s.touch = wrap(s.touch + dir, 3), s.touch_hidden = false; break;
         case kShowFps: s.show_fps = !s.show_fps; break;
+        case kWindowMode: s.window_mode = wrap(s.window_mode + dir, 3); break;
         case kVolume: s.volume = std::clamp(s.volume + dir * 10, 0, 100); break;
     }
 }
@@ -327,6 +329,7 @@ View view() {
     all[kTouch] = {"Touch controls", s.touch == 1 ? "On" : s.touch == 2 ? "Off" : "Auto (no controller)"};
     all[kGamepadView] = {"GamePad screen", s.gamepad_view ? "On (F2 / Guide)" : "Off (F2 / Guide)"};
     all[kShowFps] = {"FPS counter", s.show_fps ? "On" : "Off"};
+    all[kWindowMode] = {"Window mode", s.window_mode == 2 ? "Exclusive fullscreen" : s.window_mode == 1 ? "Borderless fullscreen" : "Windowed"};
     all[kMods] = {"Mods", mods::summary(), false, true};
     snprintf(b, sizeof b, "%d%%", s.volume);
     all[kVolume] = {"Volume", b};

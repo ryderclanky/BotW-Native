@@ -9,6 +9,7 @@
 #include "hle.h"
 #include "loader.h"
 #include "os.h"
+#include "region.h"
 #include "thread.h"
 
 namespace {
@@ -324,8 +325,8 @@ HLE_EXPORT(coreinit, UCReadSysConfig) {
         uint32_t size = mem::r32(e + 0x4C), data = mem::r32(e + 0x50);
         uint32_t v = 0;
         bool known = true;
-        if (name == "cafe.language") v = 1;           // English
-        else if (name == "cafe.cntry_reg") v = 49;    // United States
+        if (name == "cafe.language") v = region::get().language;
+        else if (name == "cafe.cntry_reg") v = region::get().country;
         else if (name == "cafe.eula_agree") v = 1;
         else if (name == "cafe.initial_launch") v = 0;
         else if (name == "parent.enable") v = 0;
@@ -350,7 +351,7 @@ HLE_EXPORT(coreinit, MCP_GetSysProdSettings) {
     uint32_t s = ARG(1);
     mem::commit(s, 0x46, true);
     memset(mem::host(s), 0, 0x46);
-    mem::w32(s + 0, 2);  // USA
-    mem::w32(s + 4, 2);
+    mem::w32(s + 0, region::get().code);  // 1 Japan, 2 USA, 4 Europe
+    mem::w32(s + 4, region::get().code);
     RET(0);
 }

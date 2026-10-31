@@ -9,6 +9,7 @@
 #include <atomic>
 
 #include "../src/host/menu.h"
+#include "../src/host/swkbd_state.h"
 #include "../src/host/touch.h"
 #include "../src/host/touch_draw.h"
 #include "../src/bench/bench.h"
@@ -52,6 +53,37 @@ void LatteOverlay_render(bool padView) {
     menu::pointer_state(&px, &py, &down);
     io.AddMousePosEvent(px, py);
     io.AddMouseButtonEvent(0, down);
+
+    swkbd::View keyboard = swkbd::keyboard().view();
+    if (keyboard.active) {
+        ImGui::SetNextWindowPos({io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f}, ImGuiCond_Always, {0.5f, 0.5f});
+        ImGui::SetNextWindowBgAlpha(0.93f);
+        if (ImGui::Begin("##software_keyboard", nullptr,
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove)) {
+            ImGui::SetWindowFontScale(ui);
+            ImGui::TextUnformatted("Enter a name");
+            ImGui::TextUnformatted(keyboard.text.empty() ? " " : keyboard.text.c_str());
+            ImGui::Separator();
+            for (int i = 0; i < 44; ++i) {
+                if (i % 10 != 0 && i < 40) ImGui::SameLine();
+                if (i > 40) ImGui::SameLine();
+                if (i == keyboard.selected)
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.38f, 0.12f, 1.0f));
+                char label[2] = {i < 40 ? swkbd::Keyboard::keys[i] : '\0', '\0'};
+                const char* special[] = {"Space", "Delete", "OK", "Cancel"};
+                ImGui::PushID(i);
+                if (ImGui::Button(i < 40 ? label : special[i - 40], {i < 40 ? 30 * ui : 78 * ui, 27 * ui}))
+                    swkbd::keyboard().select(i);
+                ImGui::PopID();
+                if (i == keyboard.selected) ImGui::PopStyleColor();
+            }
+            ImGui::TextUnformatted("Keyboard: type, Enter to accept, Esc to cancel");
+            ImGui::TextUnformatted("Controller: D-pad to select, A to enter, X to delete, Start to accept");
+        }
+        ImGui::End();
+        return;
+    }
 
     const ImGuiWindowFlags overlay = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |

@@ -421,6 +421,14 @@ void wait_for_vsync() {
     uint64 v = g_vsync_count;
     g_vsync_cv.wait_for(l, std::chrono::milliseconds(100), [&] { return g_vsync_count != v; });
 }
+uint64_t vsync_count() {
+    std::lock_guard<std::mutex> l(g_sync_lock);
+    return g_vsync_count;
+}
+void wait_vsync_count(uint64_t target) {
+    std::unique_lock<std::mutex> l(g_sync_lock);
+    g_vsync_cv.wait_for(l, std::chrono::milliseconds(200), [&] { return g_vsync_count >= target; });
+}
 uint64_t last_flip_time() { return g_last_flip_time; }
 uint64_t last_vsync_time() { return g_last_vsync_time; }
 uint32_t swap_interval() { return LatteGPUState.sharedArea ? LatteGPUState.sharedArea->swapInterval : 1; }

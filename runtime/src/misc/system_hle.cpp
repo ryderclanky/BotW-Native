@@ -138,15 +138,16 @@ HLE_EXPORT(nn_aoc, AOC_ListTitle) {
 }
 // AOC_OpenTitle(char* pathOut, AOCTitle* title, work, workSize): path is at AOCTitle+0x0E
 HLE_EXPORT(nn_aoc, AOC_OpenTitle) {
-    if (!ARG(0) || !mem::commit(ARG(0), 0x80, true)) {
-        RET(0);
-        return;
-    }
-    memset(mem::host(ARG(0)), 0, 0x80);
     const char* src = "";
     if (ARG(1) && mem::commit(ARG(1) + 0x0E, 88, false)) src = mem::str(ARG(1) + 0x0E);
     if (!src) src = "";
-    strncpy((char*)mem::host(ARG(0)), src, 0x7F);
+    // The caller supplies a string buffer, not necessarily a 128-byte array.
+    // Padding the output overwrites adjacent guest objects during DLC startup.
+    const size_t length = strnlen(src, 87);
+    if (ARG(0) && mem::commit(ARG(0), length + 1, true)) {
+        memcpy(mem::host(ARG(0)), src, length);
+        mem::w8(ARG(0) + static_cast<uint32_t>(length), 0);
+    }
     RET(0);
 }
 HLE_EXPORT(nn_aoc, AOC_CloseTitle) { RET(0); }

@@ -28,7 +28,10 @@ BIG_LINES = 30000
 HUGE_LINES = 120000
 
 HEADER = """#include "ppc.h"
+#include <atomic>
 #include "hle_decls.h"
+extern std::atomic<bool> g_has_guest_fn_overrides;
+extern "C" bool rt_try_override(PPCContext*, uint32_t, void (*)(PPCContext*));
 extern "C" PPC_NORETURN void rt_bad_return(PPCContext* c, uint32_t addr, uint32_t lr0);
 #define RETURN() do { if (__builtin_expect(c->lr != lr0, 0)) rt_bad_return(c, __LINE__, lr0); return; } while (0)
 #define RETURN_TAIL() return

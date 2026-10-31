@@ -118,6 +118,8 @@ bool g_title_from_meta = false;
 bool g_pack = false;
 bool g_inited = false;
 bool g_no_mods = false;
+bool g_no_dlc = false;
+uint64_t g_base_title_id = 0;
 std::string g_game_path;
 std::string g_user_path;
 
@@ -2452,7 +2454,7 @@ void rebuild_state_locked() {
         g_content_base = path_to_utf8(game / "content");
         fs::path aoc = aoc_content_root(game / "aoc");
         if (!aoc.empty()) g_aoc_base = path_to_utf8(aoc);
-        uint64_t base = parse_title(g_game_path);
+        uint64_t base = g_base_title_id ? g_base_title_id : parse_title(g_game_path);
         if (base != 0) {
             g_title = (base & 0xFFFFFFFFULL) | 0x0005000C00000000ULL;
             g_title_from_meta = true;
@@ -2481,6 +2483,10 @@ void rebuild_state_locked() {
     collect_owned(g_aoc);
     collect_owned_base(g_aoc_base);
     if (g_pack) g_owned.insert(0x0010);
+    if (g_no_dlc) {
+        g_pack = false;
+        g_owned.clear();
+    }
 
     apply_patches_locked();
     if (!user.empty()) scan_discovered(user);
@@ -2491,7 +2497,9 @@ void rebuild_state_locked() {
             static_cast<unsigned long long>(g_added));
     char mount[40];
     snprintf(mount, sizeof mount, "/vol/aoc%016llx", static_cast<unsigned long long>(g_title));
-    if (g_pack) {
+    if (g_no_dlc) {
+        LOG("DLC: disabled for this run (--no-dlc)");
+    } else if (g_pack) {
         LOG("DLC: installed as %s (AocMainField.pack found%s)", mount, g_title_from_meta ? "" : ", title id assumed USA");
     } else if (g_aoc.kids.empty() && !base_nonempty(g_aoc_base)) {
         LOG("DLC: not installed");
@@ -2627,11 +2635,14 @@ std::vector<std::string> load_order(const Config& cfg, const std::vector<std::st
     return unlisted;
 }
 
-void init(const std::string& game_root, const std::string& user_root, bool enabled) {
+void init(const std::string& game_root, const std::string& user_root, bool enabled, bool enable_dlc,
+          uint64_t base_title_id) {
     std::lock_guard<std::recursive_mutex> lk(g_mods_mtx);
     g_game_path = game_root;
     g_user_path = user_root;
     g_no_mods = !enabled;
+    g_no_dlc = !enable_dlc;
+    g_base_title_id = base_title_id;
     rebuild_state_locked();
 }
 
@@ -2664,6 +2675,10 @@ Query query(const std::string& guest) {
     Query q;
     GuestVol vol = parse_guest(guest);
     if (vol.id != GuestVol::Id::Content && vol.id != GuestVol::Id::Aoc) return q;
+    if (vol.id == GuestVol::Id::Aoc && g_no_dlc) {
+        q.kind = Query::Kind::Missing;
+        return q;
+    }
     if (vol.id == GuestVol::Id::Content && g_content.kids.empty()) return q;
     bool file = false, occluded = false;
     const Node* node = walk(tree_for(vol.id), vol.rel, file, occluded);
@@ -2710,6 +2725,7 @@ ListStatus list_dir(const std::string& guest, std::vector<DirItem>& out) {
     out.clear();
     GuestVol vol = parse_guest(guest);
     if (vol.id != GuestVol::Id::Content && vol.id != GuestVol::Id::Aoc) return ListStatus::NotVolume;
+    if (vol.id == GuestVol::Id::Aoc && g_no_dlc) return ListStatus::Missing;
     if (vol.id == GuestVol::Id::Content && g_content.kids.empty()) return ListStatus::NotVolume;
     bool file = false, occluded = false;
     const Node* node = walk(tree_for(vol.id), vol.rel, file, occluded);

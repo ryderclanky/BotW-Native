@@ -185,7 +185,8 @@ enum class ListStatus { NotVolume, Missing, NotDir, Ok };
 // ---- runtime API ----
 
 // enabled = false (--no-mods) skips <user>/mods entirely; DLC detection still runs.
-void init(const std::string& game_root, const std::string& user_root, bool enabled = true);
+void init(const std::string& game_root, const std::string& user_root, bool enabled = true,
+          bool enable_dlc = true, uint64_t base_title_id = 0);
 void reload();
 void log_shutdown();
 

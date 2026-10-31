@@ -13,7 +13,10 @@ void run();                      // event loop; returns when the app should quit
 void drawable_size(int* w, int* h);
 // Pixel size of the display the window is on (for the automatic render scale).
 void display_pixel_size(int* w, int* h);
-void set_fullscreen(bool on);  // --fullscreen: start in borderless fullscreen (F11 toggles)
+void set_fullscreen(bool on);  // --fullscreen: same as set_window_mode(1)
+// 0 windowed, 1 borderless fullscreen (desktop resolution), 2 exclusive fullscreen (display's native
+// mode). Any thread; the change is applied on the event loop thread. F11 and Alt+Enter toggle.
+void set_window_mode(int mode);
 void set_gyro(bool on);        // controller gyro -> GamePad motion (default on)
 void set_rumble(bool on);
 // -1: automatic (Nintendo layout on Switch controllers, labels on Xbox/PlayStation),
