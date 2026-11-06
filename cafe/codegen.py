@@ -5,9 +5,29 @@ are emitted in address order with a `#line <address>` marker each (host crash ba
 symbolize to guest addresses), labels only where something branches. Semantics follow the Cemu
 interpreter (src/Cafe/HW/Espresso/Interpreter), including its paired-single rounding rules.
 """
+import os
+
 from . import ppc
 from .analyze import Function, bo_always
 from .image import Image
+
+# Compact-codegen options. All default to off => output identical to v0.1.2.
+#   BOTW_CG_FPFAST=1  lfs/stfs/ps ftz use fast inline paths, NaN/denormal slow paths out of line
+#   BOTW_CG_PSQ=1     psq_l/psq_st: inline float path guarded by the GQR type bit, quantized types out of line
+#   BOTW_CG_FPCC=1    fcmpu/ps_cmp: CR field written with one 32-bit store, FPSCR.FPCC update kept (same bits)
+CG_FPFAST = os.environ.get("BOTW_CG_FPFAST", "0") == "1"
+CG_PSQ = os.environ.get("BOTW_CG_PSQ", "0") == "1"
+CG_FPCC = os.environ.get("BOTW_CG_FPCC", "0") == "1"
+#   BOTW_CG_ONLY=<file>  apply the options only to the guest functions listed (one hex address per
+#                        line, e.g. a list of hot guest addresses) -> only those TUs change
+_only = os.environ.get("BOTW_CG_ONLY")
+CG_ONLY = ({int(l.split(",")[0], 16) for l in open(_only) if l.strip() and not l.startswith("guest")}
+           if _only else None)
+_ACTIVE = [True]
+
+
+def _on(flag: bool) -> bool:
+    return flag and _ACTIVE[0]
 
 
 def R(n: int) -> str:
@@ -43,6 +63,7 @@ class Generator:
         self.probes: set[int] = set()
         self.hooks: set[int] = set()  # host hook_0xADDR(c) runs after the (non-branch) instruction at ADDR
         self.check_returns = True
+        self.compact_used = False
 
     # ---- branch conditions --------------------------------------------------------------
     def cond(self, i: ppc.Insn, pre: list[str]) -> str | None:
@@ -74,6 +95,9 @@ class Generator:
     # ---- function ---------------------------------------------------------------------------
     def gen_function(self, fn: Function) -> tuple[str, set[str]]:
         callees: set[str] = set()
+        _ACTIVE[0] = CG_ONLY is None or fn.entry in CG_ONLY
+        if _ACTIVE[0] and (CG_FPFAST or CG_PSQ or CG_FPCC):
+            self.compact_used = True
         out = [f'extern "C" void f_{fn.entry:08x}(PPCContext* __restrict c) {{',
                f"  if (__builtin_expect(g_has_guest_fn_overrides.load(std::memory_order_acquire), 0) && rt_try_override(c, 0x{fn.entry:08x}u, f_{fn.entry:08x})) return;",
                "  uint8_t* const M = g_mem; (void)M;"]
@@ -496,8 +520,12 @@ class Generator:
                 ea = f"({R(ra) if upd else RA0(ra)} + (uint32_t){imm})"
             else:
                 ea = f"({R(ra) if upd else RA0(ra)} + {R(rb)})"
-            fnn = "psq_load" if "_l" in op else "psq_store"
-            L.append(f"{{ uint32_t ea_ = {ea}; {fnn}(c, M, ea_, {i.W}, c->gqr[{i.I}], {d});")
+            if _on(CG_PSQ):
+                fnn = "psq_load_fast" if "_l" in op else "psq_store_fast"
+                L.append(f"{{ uint32_t ea_ = {ea}; {fnn}(c, M, ea_, {i.W}, {i.I}, {d});")
+            else:
+                fnn = "psq_load" if "_l" in op else "psq_store"
+                L.append(f"{{ uint32_t ea_ = {ea}; {fnn}(c, M, ea_, {i.W}, c->gqr[{i.I}], {d});")
             if upd:
                 L.append(f"{R(ra)} = ea_;")
             L.append("}")
@@ -580,10 +608,14 @@ class Generator:
         return self.fpu(i)
 
     def fp_mem(self, op: str, d: int) -> list[str]:
+        if op == "lfs" and _on(CG_FPFAST):
+            return [f"{F(d)} = {P(d)} = f32_to_f64_fast(LD32(ea_));"]
         if op == "lfs":
             return [f"{F(d)} = {P(d)} = f32_to_f64(LD32(ea_));"]
         if op == "lfd":
             return [f"{F(d)} = bitsd(LD64(ea_));"]
+        if op == "stfs" and _on(CG_FPFAST):
+            return [f"ST32(ea_, f64_to_f32_fast({F(d)}));"]
         if op == "stfs":
             return [f"ST32(ea_, f64_to_f32({F(d)}));"]
         if op == "stfd":
@@ -640,7 +672,7 @@ class Generator:
         elif op == "fctiw":
             L.append(f"{F(d)} = bitsd(ppc_fctiw({fb}));")
         elif op in ("fcmpu", "fcmpo"):
-            L.append(f"set_cr_f(c, {d}, {fa}, {fb});")
+            L.append(f"{'set_cr_f_fast' if _on(CG_FPCC) else 'set_cr_f'}(c, {d}, {fa}, {fb});")
             return L
         elif op == "mffs":
             L.append(f"{F(d)} = bitsd((uint64_t)c->fpscr);")
@@ -711,10 +743,10 @@ class Generator:
             y = fb if op[9] == "0" else pb
             L.append(f"{{ double x_ = {x}, y_ = {y}; {F(d)} = x_; {P(d)} = y_; }}")
         elif op in ("ps_cmpu0", "ps_cmpo0"):
-            L.append(f"set_cr_f(c, {d}, {fa}, {fb});")
+            L.append(f"{'set_cr_f_fast' if _on(CG_FPCC) else 'set_cr_f'}(c, {d}, {fa}, {fb});")
             return L
         elif op in ("ps_cmpu1", "ps_cmpo1"):
-            L.append(f"set_cr_f(c, {d}, {pa}, {pb});")
+            L.append(f"{'set_cr_f_fast' if _on(CG_FPCC) else 'set_cr_f'}(c, {d}, {pa}, {pb});")
             return L
         else:
             return None
@@ -725,5 +757,6 @@ class Generator:
     @staticmethod
     def ps2(d: int, e0: str, e1: str, ftz: bool = False) -> list[str]:
         if ftz:
-            return [f"{{ double x_ = ftz_single({e0}), y_ = ftz_single({e1}); c->f[{d}] = x_; c->ps1[{d}] = y_; }}"]
+            fz = "ftz_single_fast" if _on(CG_FPFAST) else "ftz_single"
+            return [f"{{ double x_ = {fz}({e0}), y_ = {fz}({e1}); c->f[{d}] = x_; c->ps1[{d}] = y_; }}"]
         return [f"{{ double x_ = (float)({e0}), y_ = (float)({e1}); c->f[{d}] = x_; c->ps1[{d}] = y_; }}"]

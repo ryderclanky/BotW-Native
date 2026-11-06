@@ -1,0 +1,9 @@
+name = "botwverify"
+version = "0.1.0"
+defaultTargets = ["BotWVerify", "DataPlane"]
+
+[[lean_lib]]
+name = "BotWVerify"
+
+[[lean_lib]]
+name = "DataPlane"
