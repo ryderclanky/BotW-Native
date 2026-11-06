@@ -116,13 +116,15 @@ def main() -> None:
     written = 0
     shards_done = 0
 
-    def flush_shard(key: str, codes: list[str], callees: set[str], remaining_groups: int) -> None:
+    def flush_shard(key: str, codes: list[str], callees: set[str], remaining_groups: int,
+                    compact: bool = False) -> None:
         nonlocal written, shards_done, total_shards
         decls = sorted(c for c in callees if c.startswith(("f_", "hook_")))
         undefined.update(d for d in decls if d.startswith("f_") and d not in defined)
-        text = HEADER + "".join(f'extern "C" void {d}(PPCContext*);\n' for d in decls) + "\n" + "\n\n".join(codes) + "\n"
+        inc = '#include "compact_fp.h"\n' if compact else ""
+        text = inc + HEADER + "".join(f'extern "C" void {d}(PPCContext*);\n' for d in decls) + "\n" + "\n\n".join(codes) + "\n"
         written += write_if_changed(os.path.join(out, f"{key}.cpp"), text)
-        buckets[key] = codes
+        buckets[key] = []  # keys only: keeping every shard's text alive costs ~1 GB on this box
         shards_done += 1
         if remaining_groups == 0:
             total_shards = shards_done
@@ -137,17 +139,19 @@ def main() -> None:
         fn_key = f"fn_{b_id:04x}"
         fn_codes: list[str] = []
         fn_callees: set[str] = set()
+        gen.compact_used = False
         for entry in bucket_entries[b_id]:
             code, callees = gen.gen_function(an.functions[entry])
             n = code.count("\n") + 1
             if n > BIG_LINES:
                 big_key = f"{'huge' if n > HUGE_LINES else 'big'}_{entry:08x}"
-                flush_shard(big_key, [code], set(callees), remaining_groups + (1 if fn_codes else 0))
+                flush_shard(big_key, [code], set(callees), remaining_groups + (1 if fn_codes else 0),
+                            gen.compact_used)
             else:
                 fn_codes.append(code)
                 fn_callees.update(callees)
         if fn_codes:
-            flush_shard(fn_key, fn_codes, fn_callees, remaining_groups)
+            flush_shard(fn_key, fn_codes, fn_callees, remaining_groups, gen.compact_used)
 
     t2 = time.time()
 
