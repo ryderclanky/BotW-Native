@@ -29,8 +29,8 @@ void save_locked() {
     fprintf(f, "fps=%d\nscale=%g\ndisplay=%d\nfilter=%d\ngyro=%d\nrumble=%d\nlayout=%d\nshow_fps=%d\nvolume=%d\ntouch=%d\ntouch_hidden=%d\ngamepad_view=%d\nwindow_mode=%d\n", g_s.fps,
             g_s.scale, g_s.display, g_s.filter, g_s.gyro, g_s.rumble, g_s.layout, g_s.show_fps, g_s.volume, g_s.touch, g_s.touch_hidden,
             g_s.gamepad_view, g_s.window_mode);
-    fprintf(f, "mouse_camera=%d\nmouse_sens=%g\nmouse_sens_y=%g\nmouse_invert_x=%d\nmouse_invert_y=%d\n", g_s.mouse_camera,
-            g_s.mouse_sens, g_s.mouse_sens_y, g_s.mouse_invert_x, g_s.mouse_invert_y);
+    fprintf(f, "mouse_camera=%d\nmouse_sens=%g\nmouse_sens_y=%g\nmouse_sens_aim=%g\nmouse_invert_x=%d\nmouse_invert_y=%d\n", g_s.mouse_camera,
+            g_s.mouse_sens, g_s.mouse_sens_y, g_s.mouse_sens_aim, g_s.mouse_invert_x, g_s.mouse_invert_y);
     fclose(f);
 }
 }  // namespace
@@ -95,6 +95,7 @@ void load(const std::string& path) {
                 else if (!strcmp(line, "mouse_camera")) g_s.mouse_camera = atoi(v) != 0;
                 else if (!strcmp(line, "mouse_sens")) g_s.mouse_sens = std::clamp((float)atof(v), 0.01f, 50.0f);
                 else if (!strcmp(line, "mouse_sens_y")) g_s.mouse_sens_y = std::clamp((float)atof(v), 0.01f, 10.0f);
+                else if (!strcmp(line, "mouse_sens_aim")) g_s.mouse_sens_aim = std::clamp((float)atof(v), 0.01f, 10.0f);
                 else if (!strcmp(line, "mouse_invert_x")) g_s.mouse_invert_x = atoi(v) != 0;
                 else if (!strcmp(line, "mouse_invert_y")) g_s.mouse_invert_y = atoi(v) != 0;
                 else if (!strcmp(line, "gpu") || !strcmp(line, "gpu_name")) {

@@ -31,6 +31,7 @@ struct Settings {
     bool mouse_camera = true;
     float mouse_sens = 2.0f;
     float mouse_sens_y = 1.0f;  // vertical, relative to horizontal
+    float mouse_sens_aim = 0.8f;  // multiplier in the zoomed cameras (bow drawn, scope, camera rune)
     bool mouse_invert_x = false;
     bool mouse_invert_y = false;
     std::string gpu;       // Vulkan device UUID (hex) of the chosen GPU; empty = automatic (best GPU)
