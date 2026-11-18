@@ -768,6 +768,13 @@ void run() {
                     else if (e.key.key == SDLK_RIGHT) swkbd::keyboard().move(1, 0);
                     continue;
                 }
+                // Keys tab of the menu waiting for a key: this press is the new binding
+                if (menu::listening()) {
+                    if (e.key.key == SDLK_ESCAPE) menu::cancel_listen();
+                    else if (e.key.key == SDLK_DELETE) menu::bind(0, 0);
+                    else menu::bind(1, (int)e.key.scancode);
+                    continue;
+                }
                 // Record the press before the menu toggle. A tap of E can be down and
                 // up inside one poll; the pulse keeps it visible to the next VPADRead.
                 note_key_down(e.key.scancode);
@@ -802,6 +809,19 @@ void run() {
                        e.type == SDL_EVENT_MOUSE_BUTTON_UP) {  // touch arrives as mouse events too
                 input::mouse::event(e);
                 if (input::mouse::captured()) continue;  // relative mode: no pointer position for the menu
+                // Keys tab waiting for a key: a mouse button is the new binding; the menu does not see that click
+                // (until the button is up again)
+                static uint32_t swallow = 0;
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && menu::listening() && e.button.which != SDL_TOUCH_MOUSEID) {
+                    menu::bind(2, e.button.button);
+                    swallow = SDL_BUTTON_MASK(e.button.button);
+                    continue;
+                }
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && (swallow & SDL_BUTTON_MASK(e.button.button))) {
+                    swallow &= ~SDL_BUTTON_MASK(e.button.button);
+                    continue;
+                }
+                if (swallow) continue;
                 float density = g_win ? SDL_GetWindowPixelDensity(g_win) : 1.0f;
                 float mx = e.type == SDL_EVENT_MOUSE_MOTION ? e.motion.x : e.button.x;
                 float my = e.type == SDL_EVENT_MOUSE_MOTION ? e.motion.y : e.button.y;
@@ -809,6 +829,11 @@ void run() {
                                                              : e.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
                 menu::pointer(mx * density, my * density, down);
             } else if (e.type == SDL_EVENT_MOUSE_WHEEL) {
+                if (menu::listening() && e.wheel.y != 0) {
+                    const float y = e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y;
+                    menu::bind(y > 0 ? 3 : 4, 0);
+                    continue;
+                }
                 input::mouse::event(e);
             } else if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
                 g_draw_w = e.window.data1;

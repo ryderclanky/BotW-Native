@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+#include <string>
+
 namespace input {
 struct PadState;
 struct Motion;
@@ -42,4 +44,13 @@ struct BoundKey {
     int code = 0;
 };
 BoundKey bound_key(const char* action_id, int slot);  // slot 0 or 1
+
+// Keys tab of the overlay menu: the actions in pc_controls.ini order, their keys, and changes (saved at once).
+int action_count();
+const char* action_name(int i);
+std::string binding_text(int i, int slot);  // SDL key name / MouseLeft / WheelUp ..., "" = unbound
+void set_binding(int i, int slot, int type, int code);  // type as BoundKey (0 = clear)
+void reset_bindings();
+// Short label of an action's first bound key ("E", "Space", "LMB"), for the HUD keys; "" if unbound.
+std::string key_label(const char* action_id);
 }  // namespace pccontrols

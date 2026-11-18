@@ -9,10 +9,16 @@
 // and the result (plus the grown ResourceSizeTable entry) is written to <user>/pc_prompts. Those files are
 // served ahead of every mod (mods::set_private_override); a release build sharing the user folder ignores them.
 #pragma once
+#include <stdint.h>
+
 #include <string>
 
 namespace pcprompts {
 // After mods::init. Rebuilds only when the bindings, the template or the source files changed.
 void prepare(const std::string& game_root, const std::string& user_root);
 bool active();
+// Glyphs for the prompts of the game's menus (pc_ui.cpp re-targets them there): left click, mouse wheel, the Back
+// key, Sort (the Crouch key, which is Y in menus). 0 when the prompts are off or the font has no such glyph.
+enum class MenuGlyph { Click, Wheel, Back, Sort };
+uint16_t menu_glyph(MenuGlyph which);
 }  // namespace pcprompts

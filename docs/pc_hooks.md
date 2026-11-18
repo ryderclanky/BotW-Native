@@ -77,6 +77,18 @@ rune) use `mouse_sens_aim` (settings.ini, default 0.8, Zelda-on-PC's AimSensitiv
 
 ## Reference: other Zelda-on-PC patch groups
 
-`[BotWPCE_UI]` (same file, after the camera patch) uses the same `bla` pattern for UI text, screens,
-paraglider tick, map objects, menu cursor/list, region language, inventory slide/jump. Map them the same way
-in phases 5/11.
+`[BotWPCE_UI]` (same file, after the camera patch). Ported in phase 11 (runtime/src/game/pc_ui.cpp, input side
+runtime/src/input/pc_menus.cpp):
+
+| Zelda-on-PC patch | Hook here | Registers |
+|---|---|---|
+| 0x03C4BA98 `bla _pceUIText` (over `lwz r29,0xc(r1)`) | **0x03C4BA94** `stb r0,0xd0(r29)` (the lwz restores r29) | r29 = text box |
+| 0x03A3EDC8 `bla _pceUIScreen` | 0x03A3EDC8 | r30 = screen, r24 = layout name |
+| 0x02F033E0 `bla _pceMapObj` | 0x02F033E0 | r27 = map screen |
+| 0x03A2E8E4 `bla _pceCursorTick` | 0x03A2E8E4 | r31 = cursor manager (writes +0x28) |
+| 0x02E816E8 `bla _pceListTick` | 0x02E816E8 | r30 = list widget, r31 = current entry |
+| 0x02FF64CC `bla _pceSlideSnap` (over `bl ease`) | **0x02FF64C8** before the bl: offset = target, the ease is then a no-op | r4 = &offset, f1 = target |
+| 0x02FF6768 / 0x02FF67EC `bla _pceInvUpdate` (over `bl 0x02FF644C`) | **0x02FF6764 / 0x02FF67E8** before the bl; calls the page jump 0x02FF3AC0 via rt_call | r3 = inventory screen |
+
+Not ported: region language (0x03A2FB5C, 0x0307BE94), glide tick (0x02CB7004), and Zelda-on-PC's HUD key overlay
+(action ring keys drawn over the hidden GamePad artwork).

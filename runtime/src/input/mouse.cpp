@@ -8,6 +8,7 @@
 #include <mutex>
 
 #include "../log.h"
+#include "../settings.h"
 
 namespace input::mouse {
 namespace {
@@ -17,6 +18,36 @@ float g_wheel = 0;                  // since the last take_wheel()
 uint32_t g_pressed = 0;             // since the last take_pressed()
 std::atomic<bool> g_captured{false};
 std::atomic<uint32_t> g_buttons{0};
+std::atomic<bool> g_pointer_req{false};  // a menu wants the pointer
+std::atomic<bool> g_pointer{false};      // pointer mode active (not captured, buttons / wheel / position tracked)
+std::atomic<float> g_px{0}, g_py{0};
+std::atomic<bool> g_pinside{false};
+
+// window coordinates -> normalized picture coordinates (16:9 TV image placed by the display setting)
+void update_pointer(SDL_Window* win) {
+    static int display = 0;
+    static uint64_t display_ms = 0;
+    const uint64_t now = SDL_GetTicks();
+    if (!display_ms || now - display_ms > 500) display = settings::get().display, display_ms = now;
+    float x = 0, y = 0;
+    SDL_GetMouseState(&x, &y);
+    int w = 0, h = 0;
+    SDL_GetWindowSize(win, &w, &h);
+    if (w <= 0 || h <= 0) return g_pinside.store(false);
+    const float aspect = 16.0f / 9.0f, wa = (float)w / (float)h;
+    float iw = (float)w, ih = (float)h;
+    if (display == 0) {  // fit (letterbox)
+        if (wa > aspect) iw = h * aspect;
+        else ih = w / aspect;
+    } else if (display == 2) {  // fill (crop)
+        if (wa > aspect) ih = w / aspect;
+        else iw = h * aspect;
+    }
+    const float nx = (x - (w - iw) * 0.5f) / iw, ny = (y - (h - ih) * 0.5f) / ih;
+    g_px = nx;
+    g_py = ny;
+    g_pinside = nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1 && SDL_GetMouseFocus() == win;
+}
 
 // BOTW_PCE_MOUSE_LOG=1: once a second while the mouse is used, log what arrived (phase 2 test).
 const bool g_log = [] {
@@ -44,10 +75,11 @@ void release(SDL_Window* win, const char* why) {
 }  // namespace
 
 void event(const SDL_Event& e) {
-    if (!g_captured) return;
+    if (!g_captured && !g_pointer) return;
     switch (e.type) {
         case SDL_EVENT_MOUSE_MOTION: {
             if (e.motion.which == SDL_TOUCH_MOUSEID) return;  // touch emulation, not a mouse
+            if (!g_captured) return;  // pointer mode: the position is read in update()
             std::lock_guard<std::mutex> l(g_lock);
             g_acc.dx += e.motion.xrel;
             g_acc.dy += e.motion.yrel;
@@ -89,7 +121,30 @@ void update(SDL_Window* win, bool allowed) {
 #else
     if (!win) return;
     const bool focused = (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0;
-    const bool want = allowed && focused;
+    const bool want_pointer = allowed && focused && g_pointer_req.load();
+    const bool want = allowed && focused && !want_pointer;
+    if (want_pointer && g_captured) {
+        // a menu opened: show the cursor in the middle of the picture
+        SDL_SetWindowRelativeMouseMode(win, false);
+        g_captured = false;
+        int w = 0, h = 0;
+        SDL_GetWindowSize(win, &w, &h);
+        SDL_WarpMouseInWindow(win, w * 0.5f, h * 0.5f);
+        std::lock_guard<std::mutex> l(g_lock);
+        g_acc = {};
+        LOG("mouse: pointer (menu)");
+    }
+    if (want_pointer != g_pointer.load()) {
+        g_pointer = want_pointer;
+        g_buttons = 0;  // nothing held from before counts as a click
+        if (!want_pointer) {
+            std::lock_guard<std::mutex> l(g_lock);
+            g_wheel = 0;
+            g_pressed = 0;
+        }
+    }
+    if (g_pointer) update_pointer(win);
+    else g_pinside = false;
     if (want && !g_captured) {
         if (!SDL_SetWindowRelativeMouseMode(win, true)) {
             static bool warned = false;
@@ -106,6 +161,7 @@ void update(SDL_Window* win, bool allowed) {
     } else if (!want && g_captured) {
         release(win, !focused ? "window lost focus" : "menu or keyboard open");
     }
+    // (when a menu takes the pointer while not captured, e.g. after a focus change, nothing else is needed)
 
     if (!g_log) return;
     const uint64_t now = SDL_GetTicks();
@@ -121,6 +177,10 @@ void update(SDL_Window* win, bool allowed) {
 }
 
 bool captured() { return g_captured; }
+
+void set_pointer_mode(bool on) { g_pointer_req = on; }
+bool pointer_mode() { return g_pointer; }
+Pointer pointer() { return {g_px.load(), g_py.load(), g_pointer.load() && g_pinside.load()}; }
 
 Delta take() {
     std::lock_guard<std::mutex> l(g_lock);

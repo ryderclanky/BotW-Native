@@ -1,7 +1,7 @@
 // PC keyboard/mouse actions. Port of Zelda-on-PC's action list and default bindings
 // (src/pcedition/PCSettings.cpp, MPL-2.0, https://github.com/mircea32000/Zelda-on-PC); the mapping of each
-// action to GamePad input follows its PCInput.cpp. Selectors with the mouse, the wheel weapon switch, the
-// Journal shortcut and Motion Control come with the gameplay extras (phase 5); their bindings are read and kept.
+// action to GamePad input follows its PCInput.cpp. Selectors with the mouse, the wheel weapon switch and Motion
+// Control are run per game read (frame()); so is the mouse in the game's menus and the Journal key (pc_menus.cpp).
 #include "pc_controls.h"
 
 #include <algorithm>
@@ -23,6 +23,7 @@
 #include "../utf8_path.h"
 #include "input.h"
 #include "mouse.h"
+#include "pc_menus.h"
 #include "pc_tilt.h"
 
 bool pce_gameplay_camera();  // game/pc_camera.cpp: a player camera updated in the last 150 ms
@@ -87,7 +88,7 @@ enum Kind {
     WheelNext, // a wheel notch or press steps the weapon (arrow while aiming) selector
     WheelPrev,
     Tilt,      // Motion Control: TiltMode turns it on / off, TiltLevel levels the slate (frame())
-    Later,     // journal (phase 11)
+    Journal,   // pause menu on the adventure log (pc_menus)
 };
 
 struct ActionDef {
@@ -126,7 +127,7 @@ const ActionDef kActions[] = {
     {"WeaponPrev", "Previous Weapon / Arrow", WheelPrev, 0, 0, "WheelUp", ""},
     {"Inventory", "Inventory", Btn, BTN_PLUS, 0, "Tab", "I"},
     {"Map", "Map", Btn, BTN_MINUS, 0, "M", ""},
-    {"Journal", "Adventure Log (Quests)", Later, 0, 0, "J", ""},
+    {"Journal", "Adventure Log (Quests)", Journal, 0, 0, "J", ""},
     {"MenuUp", "Menu Up", Btn, BTN_UP, 0, "Up", ""},
     {"MenuDown", "Menu Down", Btn, BTN_DOWN, 0, "Down", ""},
     {"MenuLeft", "Menu Left", Btn, BTN_LEFT, 0, "Left", ""},
@@ -177,6 +178,8 @@ struct Shared {
     int wheel_steps = 0;        // + next, - previous
     int tilt_turn = 0;          // wheel notches while Motion Control is on (+ up)
     bool enabled = false;       // window focused, no overlay menu or keyboard
+    uint32_t mouse_pressed = 0; // mouse buttons pressed since the last game read (menus)
+    int menu_wheel = 0;         // wheel notches while a game menu has the pointer (+ up)
 } g_sh;
 bool g_host_down[kCount] = {};
 float g_wheel_acc = 0;
@@ -300,13 +303,25 @@ bool active() {
     return g_on;
 }
 
+// In the game's menus (a menu has the pointer) the Crouch key is the GamePad's Y: Sort in the inventory (its prompt
+// shows the Crouch key there, see pc_ui.cpp). In play it stays the left stick click.
+uint32_t action_bits(int i, bool pointer) {
+    static const int kCrouch = [] {
+        for (int k = 0; k < kCount; k++)
+            if (!strcmp(kActions[k].id, "Crouch")) return k;
+        return -1;
+    }();
+    return pointer && i == kCrouch ? BTN_Y : kActions[i].bits;
+}
+
 void key_down(SDL_Scancode sc) {
     if (!active()) return;
+    const bool pointer = mouse::pointer_mode();
     uint32_t bits = 0;
     for (int i = 0; i < kCount; i++)
         if (kActions[i].kind == Btn)
             for (auto& k : g_keys[i])
-                if (k.type == Key::Scan && k.code == (int)sc) bits |= kActions[i].bits;
+                if (k.type == Key::Scan && k.code == (int)sc) bits |= action_bits(i, pointer);
     pulse(bits);
 }
 
@@ -340,9 +355,12 @@ void apply(SDL_Window* win, PadState& s) {
     // turns the slate flat (and does nothing else), and a key of "Level the Slate" does only that (by default
     // the middle button, which is also the Scope's).
     const bool tilt = g_tilt_on.load();
-    const bool in_play = pce_gameplay_camera() || tilt;
-    int tilt_turn = 0;
-    if (tilt) tilt_turn = notches, notches = 0;
+    // a game menu has the pointer (pc_menus): mouse buttons and wheel are the menu's
+    const bool pointer = mouse::pointer_mode();
+    const bool in_play = (pce_gameplay_camera() || tilt) && !pointer;
+    int tilt_turn = 0, menu_wheel = 0;
+    if (pointer) menu_wheel = notches, notches = 0;
+    else if (tilt) tilt_turn = notches, notches = 0;
     static const int kTiltLevel = [] {
         for (int i = 0; i < kCount; i++)
             if (!strcmp(kActions[i].id, "TiltLevel")) return i;
@@ -386,8 +404,8 @@ void apply(SDL_Window* win, PadState& s) {
         sel_down[i] = down;
         switch (a.kind) {
             case Btn:
-                if (down) bits |= a.bits;
-                if (tap) tapped |= a.bits;
+                if (down) bits |= action_bits(i, pointer);
+                if (tap) tapped |= action_bits(i, pointer);
                 break;
             case MoveX: if (down) mx += a.sign; break;
             case MoveY: if (down) my += a.sign; break;
@@ -422,6 +440,8 @@ void apply(SDL_Window* win, PadState& s) {
         }
         g_sh.wheel_steps += wheel_steps;
         g_sh.tilt_turn += tilt_turn;
+        g_sh.menu_wheel += menu_wheel;
+        if (pointer) g_sh.mouse_pressed |= mpressed;
         g_sh.enabled = focused && !menu::is_open() && !swkbd::keyboard().view().active;
     }
 
@@ -487,6 +507,13 @@ struct Out {
     bool stick = false;
     float rx = 0;
 } g_out;
+// ... and the menus' (pointer clicks, map drag / zoom, category flicks)
+struct MenuOut {
+    uint32_t buttons = 0;
+    bool l = false, r = false;
+    float lx = 0, ly = 0, rx = 0, ry = 0;
+} g_menu_out;
+bool g_prev_lmb = false, g_prev_rmb = false;
 std::mutex g_frame_lock;
 bool g_was_gameplay = false;
 // Motion Control: the virtual GamePad's motion of the last advancing read (under g_frame_lock)
@@ -507,6 +534,12 @@ void apply_out(PadState& s, const Out& o) {
         s.ry = 0;
     }
 }
+
+void apply_menu_out(PadState& s, const MenuOut& o) {
+    s.buttons |= o.buttons;
+    if (o.l) s.lx = o.lx, s.ly = o.ly;
+    if (o.r) s.rx = o.rx, s.ry = o.ry;
+}
 }  // namespace
 
 bool owns_mouse() { return g_owns_mouse; }
@@ -522,7 +555,7 @@ bool tilt_motion(input::Motion* out) {
 void frame(PadState& s, bool advance) {
     if (!active()) return;
     std::lock_guard<std::mutex> fl(g_frame_lock);
-    if (!advance) return apply_out(s, g_out);
+    if (!advance) return apply_menu_out(s, g_menu_out), apply_out(s, g_out);
 
     static const int kBow = action_index("Bow");
     Shared sh;
@@ -532,8 +565,36 @@ void frame(PadState& s, bool advance) {
         for (bool& p : g_sh.pressed) p = false;
         g_sh.wheel_steps = 0;
         g_sh.tilt_turn = 0;
+        g_sh.mouse_pressed = 0;
+        g_sh.menu_wheel = 0;
     }
     const uint64_t now = SDL_GetTicks();
+
+    // ---- the game's menus (pointer, map, tabs, pause menu page keys) ----
+    {
+        static const int kInventory = action_index("Inventory"), kJournal = action_index("Journal");
+        pcmenus::FrameIO io;
+        const mouse::Pointer p = mouse::pointer();
+        io.mouse_inside = sh.enabled && p.inside;
+        io.mouse_x = p.x;
+        io.mouse_y = p.y;
+        const uint32_t held = sh.enabled ? mouse::buttons() | sh.mouse_pressed : 0;
+        const bool lmb = (held & SDL_BUTTON_LMASK) != 0, rmb = (held & SDL_BUTTON_RMASK) != 0;
+        io.lmb_down = lmb;
+        io.lmb_pressed = (sh.enabled && (sh.mouse_pressed & SDL_BUTTON_LMASK)) || (lmb && !g_prev_lmb);
+        io.lmb_released = !lmb && g_prev_lmb;
+        io.rmb_pressed = (sh.enabled && (sh.mouse_pressed & SDL_BUTTON_RMASK)) || (rmb && !g_prev_rmb);
+        io.mmb_down = (held & SDL_BUTTON_MMASK) != 0;
+        g_prev_lmb = lmb;
+        g_prev_rmb = rmb;
+        io.wheel = sh.enabled ? sh.menu_wheel : 0;
+        io.inventory_key = sh.enabled && kInventory >= 0 && sh.pressed[kInventory];
+        io.journal_key = sh.enabled && kJournal >= 0 && sh.pressed[kJournal];
+        pcmenus::update(io);
+        mouse::set_pointer_mode(io.pointer_mode);
+        g_menu_out = {io.hold_add, io.override_l, io.override_r, io.lx, io.ly, io.rx, io.ry};
+        apply_menu_out(s, g_menu_out);
+    }
 
     // ---- Motion Control ----
     static const int kTiltMode = action_index("TiltMode"), kTiltLevel = action_index("TiltLevel");
@@ -681,6 +742,78 @@ BoundKey bound_key(const char* action_id, int slot) {
     }
 }
 
+// ---- bindings for the overlay menu's Keys tab (host main thread) ----
+int action_count() { return kCount; }
+const char* action_name(int i) { return i >= 0 && i < kCount ? kActions[i].name : ""; }
+
+std::string binding_text(int i, int slot) {
+    ensure();
+    if (i < 0 || i >= kCount || slot < 0 || slot > 1) return "";
+    return key_name(g_keys[i][slot]);
+}
+
+namespace {
+void save() {
+    if (g_path.empty()) return;
+    if (write_file(botw::path_from_utf8(g_path))) LOG("pc controls: bindings saved to %s", g_path.c_str());
+    else LOG("pc controls: could not write %s", g_path.c_str());
+}
+}  // namespace
+
+void set_binding(int i, int slot, int type, int code) {
+    ensure();
+    if (i < 0 || i >= kCount || slot < 0 || slot > 1) return;
+    Key k;
+    switch (type) {
+        case 1: k = {Key::Scan, code}; break;
+        case 2: k = {Key::Mouse, code}; break;
+        case 3: k = {Key::WheelUp, 0}; break;
+        case 4: k = {Key::WheelDown, 0}; break;
+        default: break;
+    }
+    g_keys[i][slot] = k;
+    LOG("pc controls: %s %s = %s", kActions[i].id, slot ? "(second key)" : "", key_name(k).empty() ? "(none)" : key_name(k).c_str());
+    save();
+}
+
+void reset_bindings() {
+    ensure();
+    set_defaults();
+    LOG("pc controls: bindings reset to the defaults");
+    save();
+}
+
+std::string key_label(const char* action_id) {
+    ensure();
+    const int i = action_index(action_id);
+    if (i < 0) return "";
+    for (const Key& k : g_keys[i]) {
+        switch (k.type) {
+            case Key::Mouse:
+                switch (k.code) {
+                    case SDL_BUTTON_LEFT: return "LMB";
+                    case SDL_BUTTON_RIGHT: return "RMB";
+                    case SDL_BUTTON_MIDDLE: return "MMB";
+                    case SDL_BUTTON_X1: return "M4";
+                    default: return "M5";
+                }
+            case Key::WheelUp: return "Wheel Up";
+            case Key::WheelDown: return "Wheel Dn";
+            case Key::Scan: {
+                std::string n = key_name(k);
+                for (const char* side : {"Left ", "Right "})
+                    if (n.rfind(side, 0) == 0) n.erase(0, strlen(side));
+                if (n == "Return") n = "Enter";
+                if (n == "Escape") n = "Esc";
+                if (n == "Backspace") n = "Bksp";
+                return n;
+            }
+            default: break;
+        }
+    }
+    return "";
+}
+
 void log_bindings() {
     if (!active()) return;
     std::string line;
@@ -689,7 +822,7 @@ void log_bindings() {
         std::string a = key_name(g_keys[i][0]), b = key_name(g_keys[i][1]);
         if (a.empty() && b.empty()) continue;
         line += std::string(kActions[i].id) + "=" + (a.empty() ? b : b.empty() ? a : a + "/" + b) +
-                (kActions[i].kind == Later ? "(not yet)" : "") + "  ";
+"  ";
         if (++shown % 8 == 0) {
             LOG("pc controls: %s", line.c_str());
             line.clear();

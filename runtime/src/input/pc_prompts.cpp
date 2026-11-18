@@ -382,6 +382,23 @@ std::string file_stamp(const std::string& path) {
 
 bool active() { return g_active; }
 
+uint16_t menu_glyph(MenuGlyph which) {
+    if (!g_active) return 0;
+    auto have = [](uint16_t g) { return g_cmap.count(g) ? g : (uint16_t)0; };
+    switch (which) {
+        case MenuGlyph::Click: return have(kGlyphMouseLeft);
+        case MenuGlyph::Wheel: return have(kGlyphWheelUpDown);
+        case MenuGlyph::Back:
+            for (int slot = 0; slot < 2; slot++) {  // Escape when it is one of Back's keys (it is by default)
+                pccontrols::BoundKey k = pccontrols::bound_key("Back", slot);
+                if (k.type == 1 && k.code == SDL_SCANCODE_ESCAPE) return key_glyph(0x1B);
+            }
+            return action_glyph("Back");
+        case MenuGlyph::Sort: return action_glyph("Crouch");
+    }
+    return 0;
+}
+
 void prepare(const std::string& game_root, const std::string& user_root) {
     g_active = false;
     if (!pccontrols::active() || user_root.empty() || game_root.empty()) return;

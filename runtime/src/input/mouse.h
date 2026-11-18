@@ -14,6 +14,15 @@ void event(const SDL_Event& e);
 // has input focus; release otherwise.
 void update(SDL_Window* win, bool allowed);
 bool captured();
+// Menus (pc_menus): the game shows a menu that takes the mouse. While set, the capture is released (OS cursor shown)
+// but buttons and wheel still count, and the pointer position is reported. Any thread.
+void set_pointer_mode(bool on);
+bool pointer_mode();  // the pointer is in use right now
+struct Pointer {
+    float x = 0, y = 0;   // normalized coordinates of the game picture (0..1, origin top-left)
+    bool inside = false;  // over the picture, window focused
+};
+Pointer pointer();
 
 struct Delta {
     double dx = 0, dy = 0;  // raw counts, +x right, +y down (as the OS reports them)
