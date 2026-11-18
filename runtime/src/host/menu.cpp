@@ -33,6 +33,12 @@ enum RowId {
     kWindowMode,
     kMods,
     kVolume,
+    kMouseCam,
+    kMouseSens,
+    kMouseSensY,
+    kMouseSensAim,
+    kMouseInvX,
+    kMouseInvY,
     kModReload,
     kKeyReset,
     kClose,
@@ -50,7 +56,7 @@ int g_key_slot = 0;                // first (0) or second (1) key of the selecte
 std::atomic<int> g_listen{-1};     // action waiting for a key press, -1 none
 const std::vector<int>& tab_rows(int t) {
     static const std::vector<int> graphics = {kFps, kWindowMode, kScale, kDisplay, kFilter, kGamepadView, kShowFps, kMods};
-    static const std::vector<int> controls = {kGyro, kRumble, kLayout, kTouch};
+    static const std::vector<int> controls = {kGyro, kRumble, kLayout, kTouch, kMouseCam, kMouseSens, kMouseSensY, kMouseSensAim, kMouseInvX, kMouseInvY};
     static const std::vector<int> audio = {kVolume};
     static const std::vector<int> about;
     switch (t) {
@@ -125,6 +131,13 @@ void step(Settings& s, int row, int dir) {
         case kShowFps: s.show_fps = !s.show_fps; break;
         case kWindowMode: s.window_mode = wrap(s.window_mode + dir, 3); break;
         case kVolume: s.volume = std::clamp(s.volume + dir * 10, 0, 100); break;
+        // mouse camera (PC controls): sensitivity in steps of 0.1, rounded so repeated steps stay clean
+        case kMouseCam: s.mouse_camera = !s.mouse_camera; break;
+        case kMouseSens: s.mouse_sens = std::clamp(roundf(s.mouse_sens * 10 + dir) / 10, 0.1f, 10.0f); break;
+        case kMouseSensY: s.mouse_sens_y = std::clamp(roundf(s.mouse_sens_y * 10 + dir) / 10, 0.1f, 3.0f); break;
+        case kMouseSensAim: s.mouse_sens_aim = std::clamp(roundf(s.mouse_sens_aim * 10 + dir) / 10, 0.1f, 3.0f); break;
+        case kMouseInvX: s.mouse_invert_x = !s.mouse_invert_x; break;
+        case kMouseInvY: s.mouse_invert_y = !s.mouse_invert_y; break;
     }
 }
 
@@ -374,6 +387,15 @@ View view() {
     all[kMods] = {"Mods", mods::summary(), false, true};
     snprintf(b, sizeof b, "%d%%", s.volume);
     all[kVolume] = {"Volume", b};
+    all[kMouseCam] = {"Mouse camera", s.mouse_camera ? "On" : "Off"};
+    snprintf(b, sizeof b, "%.1f", s.mouse_sens);
+    all[kMouseSens] = {"Mouse sensitivity", b};
+    snprintf(b, sizeof b, "%.1fx", s.mouse_sens_y);
+    all[kMouseSensY] = {"Mouse vertical speed", b};
+    snprintf(b, sizeof b, "%.1fx", s.mouse_sens_aim);
+    all[kMouseSensAim] = {"Mouse aiming speed", b};
+    all[kMouseInvX] = {"Invert mouse X", s.mouse_invert_x ? "On" : "Off"};
+    all[kMouseInvY] = {"Invert mouse Y", s.mouse_invert_y ? "On" : "Off"};
     all[kModReload] = {"Apply / Reload Overlay (R)", "", true};
     all[kClose] = {"Close", "", true};
     if (tab_now == kTabMods) {
