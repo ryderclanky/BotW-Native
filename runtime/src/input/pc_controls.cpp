@@ -23,6 +23,7 @@
 #include "../utf8_path.h"
 #include "input.h"
 #include "mouse.h"
+#include "pc_tilt.h"
 
 bool pce_gameplay_camera();  // game/pc_camera.cpp: a player camera updated in the last 150 ms
 bool pce_bow_camera();       // ... the zoomed aim camera (bow drawn)
@@ -85,7 +86,8 @@ enum Kind {
     Selector,  // hold: opens a selector (frame()); bits = d-pad it holds
     WheelNext, // a wheel notch or press steps the weapon (arrow while aiming) selector
     WheelPrev,
-    Later,     // journal (phase 11), motion control (phase 10)
+    Tilt,      // Motion Control: TiltMode turns it on / off, TiltLevel levels the slate (frame())
+    Later,     // journal (phase 11)
 };
 
 struct ActionDef {
@@ -137,8 +139,8 @@ const ActionDef kActions[] = {
     {"CameraDown", "Camera Down", CamY, 0, -1, "", ""},
     {"CameraLeft", "Camera Left", CamX, 0, -1, "", ""},
     {"CameraRight", "Camera Right", CamX, 0, +1, "", ""},
-    {"TiltMode", "Motion Control (Tilt)", Later, 0, 0, "T", ""},
-    {"TiltLevel", "Motion Control: Level the Slate", Later, 0, 0, "MouseMiddle", ""},
+    {"TiltMode", "Motion Control (Tilt)", Tilt, 0, 0, "T", ""},
+    {"TiltLevel", "Motion Control: Level the Slate", Tilt, 0, 0, "MouseMiddle", ""},
     {"Settings", "Settings Menu", Settings, 0, 0, "F1", ""},
     {"MenuPrevPage", "Inventory: Previous Page", Btn, BTN_L, 0, "PageUp", ""},
     {"MenuNextPage", "Inventory: Next Page", Btn, BTN_R, 0, "PageDown", ""},
@@ -163,6 +165,9 @@ float g_key_camera_speed = 0.75f;
 float g_wheel_release_ms = 450.0f;   // after the last wheel notch the selector closes (equips the item)
 float g_selector_mouse_step = 60.0f; // mouse counts per selector step while a selector key is held
 bool g_selector_invert_scroll = false;
+bool g_tilt_toggle = true;  // TiltMode toggles Motion Control (else: on while held)
+pctilt::Config g_tilt;
+std::atomic<bool> g_tilt_on{false};
 
 // Host (apply) -> game reads (frame)
 std::mutex g_share_lock;
@@ -170,6 +175,7 @@ struct Shared {
     bool down[kCount] = {};
     bool pressed[kCount] = {};  // went down since the last game read
     int wheel_steps = 0;        // + next, - previous
+    int tilt_turn = 0;          // wheel notches while Motion Control is on (+ up)
     bool enabled = false;       // window focused, no overlay menu or keyboard
 } g_sh;
 bool g_host_down[kCount] = {};
@@ -204,9 +210,15 @@ bool write_file(const std::filesystem::path& file) {
             "# WheelDown. Leave empty for unbound. enabled=0 goes back to the built-in keys / controls.ini.\n"
             "enabled=%d\nwalk_speed=%g\nkey_camera_speed=%g\n"
             "# selectors: mouse counts per step while 1-4 is held; ms after the last wheel notch until it equips\n"
-            "selector_mouse_step=%g\nwheel_release_ms=%g\nselector_invert_scroll=%d\n\n",
+            "selector_mouse_step=%g\nwheel_release_ms=%g\nselector_invert_scroll=%d\n"
+            "# Motion Control (TiltMode): the mouse tilts the GamePad, the wheel turns it flat. tilt_toggle=0: on\n"
+            "# while the key is held. Sensitivity x 0.05 degrees per count; degrees, ms, degrees per second.\n"
+            "tilt_toggle=%d\ntilt_sens=%g\ntilt_invert_x=%d\ntilt_invert_y=%d\ntilt_max_angle=%g\n"
+            "tilt_return_speed=%g\ntilt_turn_step=%g\ntilt_invert_turn=%d\ntilt_smoothing=%g\ntilt_max_speed=%g\n\n",
             g_on ? 1 : 0, g_walk_speed, g_key_camera_speed, g_selector_mouse_step, g_wheel_release_ms,
-            g_selector_invert_scroll ? 1 : 0);
+            g_selector_invert_scroll ? 1 : 0, g_tilt_toggle ? 1 : 0, g_tilt.sens, g_tilt.invert_x ? 1 : 0,
+            g_tilt.invert_y ? 1 : 0, g_tilt.max_angle, g_tilt.return_speed, g_tilt.turn_step, g_tilt.invert_turn ? 1 : 0,
+            g_tilt.smoothing_ms, g_tilt.max_speed);
     for (int i = 0; i < kCount; i++) {
         std::string a = key_name(g_keys[i][0]), b = key_name(g_keys[i][1]);
         std::string v = a.empty() ? b : b.empty() ? a : a + ", " + b;
@@ -249,6 +261,16 @@ void ensure() {
         else if (k == "selector_mouse_step") g_selector_mouse_step = std::clamp((float)atof(v.c_str()), 1.0f, 10000.0f);
         else if (k == "wheel_release_ms") g_wheel_release_ms = std::clamp((float)atof(v.c_str()), 50.0f, 5000.0f);
         else if (k == "selector_invert_scroll") g_selector_invert_scroll = atoi(v.c_str()) != 0;
+        else if (k == "tilt_toggle") g_tilt_toggle = atoi(v.c_str()) != 0;
+        else if (k == "tilt_sens") g_tilt.sens = std::clamp((float)atof(v.c_str()), 0.01f, 50.0f);
+        else if (k == "tilt_invert_x") g_tilt.invert_x = atoi(v.c_str()) != 0;
+        else if (k == "tilt_invert_y") g_tilt.invert_y = atoi(v.c_str()) != 0;
+        else if (k == "tilt_max_angle") g_tilt.max_angle = std::clamp((float)atof(v.c_str()), 1.0f, 180.0f);
+        else if (k == "tilt_return_speed") g_tilt.return_speed = std::clamp((float)atof(v.c_str()), 0.0f, 1000.0f);
+        else if (k == "tilt_turn_step") g_tilt.turn_step = std::clamp((float)atof(v.c_str()), 0.0f, 180.0f);
+        else if (k == "tilt_invert_turn") g_tilt.invert_turn = atoi(v.c_str()) != 0;
+        else if (k == "tilt_smoothing") g_tilt.smoothing_ms = std::clamp((float)atof(v.c_str()), 0.0f, 1000.0f);
+        else if (k == "tilt_max_speed") g_tilt.max_speed = std::clamp((float)atof(v.c_str()), 10.0f, 3600.0f);
         else {
             int a = find_action(k);
             if (a < 0) {
@@ -307,14 +329,31 @@ void apply(SDL_Window* win, PadState& s) {
     const uint32_t mbuttons = mouse::buttons();
     const uint32_t mpressed = mouse::take_pressed();
     g_wheel_acc += mouse::take_wheel();
-    const int notches = (int)g_wheel_acc;  // whole notches (high-resolution wheels send fractions)
+    int notches = (int)g_wheel_acc;  // whole notches (high-resolution wheels send fractions)
     g_wheel_acc -= notches;
     bool sel_down[kCount] = {};
     int wheel_steps = 0;
     // Outside gameplay (inventory, map, title, cutscenes) the mouse buttons have no gameplay meaning: right click
     // would be ZR (next pause-menu page). Until the menus take the mouse (phase 11) they do nothing there, and
     // the wheel steps the inventory categories (weapons, bows, ... food): a right-stick flick per notch.
-    const bool in_play = pce_gameplay_camera();
+    // Motion Control: the tilt puzzles' camera may not be one of ours, the mouse buttons still work; the wheel
+    // turns the slate flat (and does nothing else), and a key of "Level the Slate" does only that (by default
+    // the middle button, which is also the Scope's).
+    const bool tilt = g_tilt_on.load();
+    const bool in_play = pce_gameplay_camera() || tilt;
+    int tilt_turn = 0;
+    if (tilt) tilt_turn = notches, notches = 0;
+    static const int kTiltLevel = [] {
+        for (int i = 0; i < kCount; i++)
+            if (!strcmp(kActions[i].id, "TiltLevel")) return i;
+        return -1;
+    }();
+    auto level_key = [&](const Key& k) {
+        if (!tilt || kTiltLevel < 0 || k.type == Key::None) return false;
+        for (const Key& l : g_keys[kTiltLevel])
+            if (l.type == k.type && l.code == k.code) return true;
+        return false;
+    };
 
     float mx = 0, my = 0, cx = 0, cy = 0;
     bool walk = false;
@@ -324,6 +363,7 @@ void apply(SDL_Window* win, PadState& s) {
         bool down = false, tap = false;
         int wheel_n = 0;
         for (auto& k : g_keys[i]) {
+            if (a.kind != Tilt && level_key(k)) continue;
             switch (k.type) {
                 case Key::Scan:
                     // Alt+Tab switches windows; it is not the inventory
@@ -381,6 +421,7 @@ void apply(SDL_Window* win, PadState& s) {
             g_host_down[i] = sel_down[i];
         }
         g_sh.wheel_steps += wheel_steps;
+        g_sh.tilt_turn += tilt_turn;
         g_sh.enabled = focused && !menu::is_open() && !swkbd::keyboard().view().active;
     }
 
@@ -448,6 +489,10 @@ struct Out {
 } g_out;
 std::mutex g_frame_lock;
 bool g_was_gameplay = false;
+// Motion Control: the virtual GamePad's motion of the last advancing read (under g_frame_lock)
+input::Motion g_tilt_motion{};
+bool g_tilt_report = false;
+uint64_t g_tilt_last_ns = 0;
 
 int action_index(const char* id) {
     for (int i = 0; i < kCount; i++)
@@ -465,6 +510,14 @@ void apply_out(PadState& s, const Out& o) {
 }  // namespace
 
 bool owns_mouse() { return g_owns_mouse; }
+bool tilt_active() { return g_tilt_on; }
+
+bool tilt_motion(input::Motion* out) {
+    std::lock_guard<std::mutex> fl(g_frame_lock);
+    if (!g_tilt_report) return false;
+    *out = g_tilt_motion;
+    return true;
+}
 
 void frame(PadState& s, bool advance) {
     if (!active()) return;
@@ -478,8 +531,37 @@ void frame(PadState& s, bool advance) {
         sh = g_sh;
         for (bool& p : g_sh.pressed) p = false;
         g_sh.wheel_steps = 0;
+        g_sh.tilt_turn = 0;
     }
     const uint64_t now = SDL_GetTicks();
+
+    // ---- Motion Control ----
+    static const int kTiltMode = action_index("TiltMode"), kTiltLevel = action_index("TiltLevel");
+    {
+        const bool was = g_tilt_on;
+        bool on = was;
+        if (g_tilt_toggle) {
+            if (kTiltMode >= 0 && sh.pressed[kTiltMode] && sh.enabled) on = !on;
+        } else {
+            on = kTiltMode >= 0 && sh.down[kTiltMode] && sh.enabled;
+        }
+        if (on != was) {
+            g_tilt_on = on;
+            if (on) mouse::take();  // motion from before belongs to nothing
+            LOG("pc controls: motion control %s", on ? "on (mouse tilts the GamePad)" : "off");
+        }
+        const uint64_t ns = SDL_GetTicksNS();
+        const float dt = g_tilt_last_ns ? (float)((double)(ns - g_tilt_last_ns) / 1e9) : 1.0f / 30.0f;
+        g_tilt_last_ns = ns;
+        double mdx = 0, mdy = 0;
+        if (on) {
+            const mouse::Delta d = mouse::take();
+            if (sh.enabled) mdx = d.dx, mdy = d.dy;
+        }
+        const bool level = on && kTiltLevel >= 0 && sh.pressed[kTiltLevel];
+        g_tilt_report = pctilt::step(g_tilt, on, mdx, mdy, on ? sh.tilt_turn : 0, level, dt, &g_tilt_motion);
+    }
+    const bool tilt = g_tilt_on;
     const bool gameplay = pce_gameplay_camera();
     if (g_log && gameplay != g_was_gameplay) LOG("pc controls: gameplay camera %s", gameplay ? "active" : "inactive");
     g_was_gameplay = gameplay;
@@ -488,7 +570,7 @@ void frame(PadState& s, bool advance) {
     if (g_log && map != was_map) LOG("pc controls: world map %s", map ? "shown" : "gone");
     was_map = map;
     const bool enabled = sh.enabled;
-    const bool allowed = enabled && gameplay;
+    const bool allowed = enabled && gameplay && !tilt;  // no selectors while the mouse tilts the GamePad
     // aiming: the aim button held (mouse, key or controller) and a bow drawn (its camera is on)
     const bool aiming = (s.buttons & BTN_ZR) != 0 && pce_bow_camera();
 

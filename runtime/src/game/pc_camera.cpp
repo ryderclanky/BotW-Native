@@ -40,6 +40,7 @@
 extern "C" void rt_call(PPCContext* c, uint32_t target);
 namespace pccontrols {
 bool owns_mouse();
+bool tilt_active();
 }
 
 namespace {
@@ -140,6 +141,10 @@ void log_camera(const char* name) {
 void feed(const char* name, bool zoomed, bool gameplay = true) {
     if (g_cam_log) log_camera(name);
     if (gameplay) note_camera();
+    if (pccontrols::tilt_active()) {  // Motion Control: the mouse tilts the GamePad (pc_controls takes it)
+        g_pending_yaw = g_pending_pitch = 0;
+        return;
+    }
     if (pccontrols::owns_mouse()) {  // an open selector steps with the mouse; the camera stays
         input::mouse::take();
         g_pending_yaw = g_pending_pitch = 0;

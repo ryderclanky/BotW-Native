@@ -208,7 +208,7 @@ HLE_EXPORT(vpad, VPADRead) {
     wf(buf + 0x18, s.ry);
     wf(buf + 0x30, 1.0f);  // accXY
     input::Motion m;
-    if (input::motion(&m)) {  // controller gyro / accelerometer
+    if (pccontrols::tilt_motion(&m) || input::motion(&m)) {  // PC Motion Control, or controller gyro
         for (int k = 0; k < 3; k++) {
             wf(buf + 0x1C + 4 * k, m.acc[k]);
             wf(buf + 0x38 + 4 * k, m.gyro_change[k]);

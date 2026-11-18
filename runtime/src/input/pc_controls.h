@@ -9,6 +9,7 @@
 
 namespace input {
 struct PadState;
+struct Motion;
 }
 
 namespace pccontrols {
@@ -29,6 +30,10 @@ void clear_pulses();
 void frame(input::PadState& s, bool advance);
 // A selector is open: mouse X steps it instead of turning the camera.
 bool owns_mouse();
+// Motion Control (TiltMode) is on: the mouse tilts the virtual GamePad, the cameras leave the mouse alone.
+bool tilt_active();
+// The virtual GamePad's motion while it is reported (Motion Control on, or levelling after); else false.
+bool tilt_motion(input::Motion* out);
 void log_bindings();
 
 // A binding (for the key prompts): type 0 none, 1 SDL scancode, 2 SDL mouse button, 3 wheel up, 4 wheel down.
