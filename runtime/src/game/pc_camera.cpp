@@ -18,6 +18,8 @@
 // Camera rune (0x02BCED3C): pitch in degrees at +0x28 before the update; yaw like the aim cameras.
 // Lock-on (0x02BF0234, also the Magnesis camera class): yaw +0xAC / pitch +0xA8 in degrees, and the eye of its
 // pose turned around the look-at point so its easing has nothing to catch up.
+// Climbing (0x02BEE0F8) / conversation (0x02BCB3A0): yaw / pitch in degrees added before the update. Horse
+// (0x02BD2A44) / Master Cycle Zero (0x02BDFB20): the eye of the pose turned around the look-at point.
 // While the mouse turns a camera, the right stick carries a deflection just past the deadzone so the game
 // stays in manual camera mode (input::mouse::manual_stick).
 //
@@ -52,10 +54,7 @@ bool pce_gameplay_camera() { return now_ms() - g_cam_seen_ms.load() < 150; }
 std::atomic<int64_t> g_bow_cam_ms{-1000000};
 bool pce_bow_camera() { return now_ms() - g_bow_cam_ms.load() < 150; }
 
-// Entries (after stwu) of the other player cameras; phases 8-9 add their mouse rotation here.
-BOTW_HOOK(0x02bee0f8) { note_camera(); }  // climbing
-BOTW_HOOK(0x02bd2a44) { note_camera(); }  // horse
-BOTW_HOOK(0x02bdfb20) { note_camera(); }  // Master Cycle Zero
+// Entries (after stwu) of the other player cameras; phase 9 adds their mouse rotation here.
 BOTW_HOOK(0x02be8b30) { note_camera(); }  // shield surf
 BOTW_HOOK(0x02bf5acc) { note_camera(); }  // sand seal
 BOTW_HOOK(0x02bf8f88) { note_camera(); }  // Zora waterfall
@@ -104,9 +103,10 @@ double wrap180(double a) {
 }
 
 // A camera with mouse support updates: take the mouse motion since the last one into the pending rotation.
-// zoomed: the aiming sensitivity applies (bow drawn, scope, camera rune).
-void feed(bool zoomed) {
-    note_camera();
+// zoomed: the aiming sensitivity applies (bow drawn, scope, camera rune). gameplay: the camera counts as Link
+// being in play (pce_gameplay_camera); not the conversation camera, where mouse buttons stay inert.
+void feed(bool zoomed, bool gameplay = true) {
+    if (gameplay) note_camera();
     if (pccontrols::owns_mouse()) {  // an open selector steps with the mouse; the camera stays
         input::mouse::take();
         g_pending_yaw = g_pending_pitch = 0;
@@ -283,3 +283,33 @@ BOTW_HOOK(0x02bf0234) {  // update entry, after stwu: r3 = camera; yaw +0xAC, pi
     mem::wf32(cam + 0xa8, std::clamp((float)(mem::rf32(cam + 0xa8) + kGamePitchSign * pitch), -80.0f, 80.0f));
     turn_eye(cam, yaw, pitch, -80.0, 80.0);
 }
+
+// ---- orbit cameras with their own classes (called by the camera manager instead of the chase camera) ----
+namespace {
+// Climbing and conversation keep yaw / pitch in degrees (stick right / up lower them) and add the stick to them:
+// the mouse rotation is added right before the update, which normalises and clamps them itself.
+void orbit_tick(PPCContext* c, uint32_t yaw_off, uint32_t pitch_off, bool gameplay) {
+    feed(false, gameplay);
+    const double yaw = take(g_pending_yaw, g_yaw_age);
+    const double pitch = take(g_pending_pitch, g_pitch_age);
+    const uint32_t cam = c->r[3];
+    if ((yaw == 0 && pitch == 0) || !mem::readable(cam, 0x100)) return;
+    mem::wf32(cam + yaw_off, (float)(mem::rf32(cam + yaw_off) + kGameYawSign * yaw));
+    mem::wf32(cam + pitch_off, std::clamp((float)(mem::rf32(cam + pitch_off) + kGamePitchSign * pitch), -89.0f, 89.0f));
+}
+
+// Horse and Master Cycle take yaw / pitch from their pose every frame: the eye is turned around the look-at
+// point before the update (game pitch limits -40..60). The manual-mode stick nudge keeps the camera from
+// swinging back behind the mount, as a touch of the stick does.
+void mount_tick(PPCContext* c) {
+    feed(false);
+    const double yaw = take(g_pending_yaw, g_yaw_age);
+    const double pitch = take(g_pending_pitch, g_pitch_age);
+    turn_eye(c->r[3], yaw, pitch, -40.0, 60.0);
+}
+}  // namespace
+
+BOTW_HOOK(0x02bee0f8) { orbit_tick(c, 0x98, 0x8c, true); }  // climbing (walls, ladders): game clamps pitch +-70
+BOTW_HOOK(0x02bcb3a0) { orbit_tick(c, 0x48, 0x40, false); }  // conversation: game clamps pitch -40..60
+BOTW_HOOK(0x02bd2a44) { mount_tick(c); }  // horse
+BOTW_HOOK(0x02bdfb20) { mount_tick(c); }  // Master Cycle Zero

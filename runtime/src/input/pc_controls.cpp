@@ -26,6 +26,7 @@
 
 bool pce_gameplay_camera();  // game/pc_camera.cpp: a player camera updated in the last 150 ms
 bool pce_bow_camera();       // ... the zoomed aim camera (bow drawn)
+bool pce_map_screen();       // game/pc_ui.cpp: the world map is on screen
 
 namespace pccontrols {
 namespace {
@@ -151,6 +152,7 @@ struct Pulse {
     uint64_t until;
     uint64_t from = 0;  // (queued wheel notches: one press after the other)
     float rx = 0;       // right-stick flick instead of / with buttons
+    float ry = 0;       // right stick held up / down (map zoom)
 };
 
 bool g_tried = false, g_on = false;
@@ -356,7 +358,15 @@ void apply(SDL_Window* win, PadState& s) {
         }
     }
     pulse(tapped);
-    if (!in_play && notches && focused) {
+    if (!in_play && notches && focused && pce_map_screen()) {
+        // map: zoom with the right stick held up (wheel up = in) or down, ~5 frames per notch, at most 4 notches;
+        // a new notch replaces what is left of the last one (Zelda-on-PC PCMenus.cpp)
+        g_pulses.erase(std::remove_if(g_pulses.begin(), g_pulses.end(), [](const Pulse& p) { return p.ry != 0; }),
+                       g_pulses.end());
+        const uint64_t t = SDL_GetTicks();
+        const uint64_t ms = 167 * (uint64_t)std::min(4, std::abs(notches));
+        g_pulses.push_back({0, t + ms, t, 0, notches > 0 ? 1.0f : -1.0f});
+    } else if (!in_play && notches && focused) {
         // one right-stick flick per notch, 100 ms apart; wheel up = previous category, down = next
         uint64_t t = SDL_GetTicks();
         for (const Pulse& p : g_pulses) t = std::max(t, p.from + 100);
@@ -383,6 +393,7 @@ void apply(SDL_Window* win, PadState& s) {
         if (it->from <= now) {
             bits |= it->bits;
             if (it->rx != 0) cx = it->rx / g_key_camera_speed;  // (scaled back below: a full flick)
+            if (it->ry != 0) cy = it->ry / g_key_camera_speed;
         }
         ++it;
     }
@@ -472,6 +483,10 @@ void frame(PadState& s, bool advance) {
     const bool gameplay = pce_gameplay_camera();
     if (g_log && gameplay != g_was_gameplay) LOG("pc controls: gameplay camera %s", gameplay ? "active" : "inactive");
     g_was_gameplay = gameplay;
+    static bool was_map = false;
+    const bool map = pce_map_screen();
+    if (g_log && map != was_map) LOG("pc controls: world map %s", map ? "shown" : "gone");
+    was_map = map;
     const bool enabled = sh.enabled;
     const bool allowed = enabled && gameplay;
     // aiming: the aim button held (mouse, key or controller) and a bow drawn (its camera is on)
