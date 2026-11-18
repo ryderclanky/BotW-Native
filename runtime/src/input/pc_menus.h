@@ -21,6 +21,7 @@ struct FrameIO {
     int wheel = 0;  // notches, + = up
     // keys of the pause menu pages (pressed this read)
     bool inventory_key = false, journal_key = false;
+    bool system_key = false, in_play = false;  // Esc; a player camera is live (Link in play)
     // out
     bool pointer_mode = false;  // a menu takes the mouse: OS cursor shown, no camera, mouse buttons are the menu's
     uint32_t hold_add = 0;      // GamePad buttons pressed by the pointer this read

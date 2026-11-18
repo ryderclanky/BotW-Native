@@ -834,6 +834,10 @@ void run() {
                     menu::bind(y > 0 ? 3 : 4, 0);
                     continue;
                 }
+                if (menu::is_open()) {  // the F1 menu is open: the wheel scrolls it
+                    menu::wheel(e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y);
+                    continue;
+                }
                 input::mouse::event(e);
             } else if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
                 g_draw_w = e.window.data1;

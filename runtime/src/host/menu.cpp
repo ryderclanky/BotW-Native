@@ -174,6 +174,10 @@ void pointer_state(float* x, float* y, bool* down) {
     *down = g_pdown;
 }
 
+std::atomic<float> g_wheel{0};
+void wheel(float y) { g_wheel = g_wheel.load() + y; }
+float take_wheel() { return g_wheel.exchange(0); }
+
 std::atomic<float> g_safe[4] = {0, 0, 0, 0};
 void set_safe_area(float l, float t, float r, float b) {
     g_safe[0] = l, g_safe[1] = t, g_safe[2] = r, g_safe[3] = b;

@@ -133,9 +133,10 @@ const ActionDef kActions[] = {
     {"MenuLeft", "Menu Left", Btn, BTN_LEFT, 0, "Left", ""},
     {"MenuRight", "Menu Right", Btn, BTN_RIGHT, 0, "Right", ""},
     {"Confirm", "Confirm", Btn, BTN_A, 0, "Return", ""},
-    // Escape backs out of the game's menus. (Zelda-on-PC opens its settings with it; here that is the F1 overlay,
-    // whose top row flips the frame rate with an arrow key, an easy accident when Escape meant "leave the menu".)
-    {"Back", "Back", Btn, BTN_B, 0, "Backspace", "Escape"},
+    {"Back", "Back", Btn, BTN_B, 0, "Backspace", ""},
+    // Escape: in play it opens the pause menu on the System page; in any menu or dialog it backs out (B), see
+    // pc_menus. (Zelda-on-PC opens its settings with it; here that is F1.)
+    {"System", "System Menu / Back", Journal, 0, 0, "Escape", ""},
     {"CameraUp", "Camera Up", CamY, 0, +1, "", ""},
     {"CameraDown", "Camera Down", CamY, 0, -1, "", ""},
     {"CameraLeft", "Camera Left", CamX, 0, -1, "", ""},
@@ -247,6 +248,7 @@ void ensure() {
     g_on = true;
     char line[512];
     int n = 0;
+    bool saw_system = false;
     while (fgets(line, sizeof line, f)) {
         n++;
         char* p = line;
@@ -280,6 +282,7 @@ void ensure() {
                 LOG("pc controls: line %d: unknown action \"%s\"", n, k.c_str());
                 continue;
             }
+            if (std::string(kActions[a].id) == "System") saw_system = true;
             g_keys[a][0] = g_keys[a][1] = {};
             size_t comma = v.find(',');
             std::string k1 = v.substr(0, comma), k2 = comma == std::string::npos ? "" : v.substr(comma + 1);
@@ -288,6 +291,14 @@ void ensure() {
         }
     }
     fclose(f);
+    if (!saw_system) {
+        // file from before the System key: Escape was Back's second key; it moves to System (Esc still backs out)
+        const int back = find_action("Back"), sys = find_action("System");
+        Key esc;
+        if (back >= 0 && sys >= 0 && parse_key("Escape", esc))
+            for (Key& k : g_keys[back])
+                if (k.type == esc.type && k.code == esc.code) k = {};
+    }
     LOG("pc controls: %s %s", g_path.c_str(), g_on ? "(on)" : "(enabled=0, off)");
 }
 
@@ -572,7 +583,8 @@ void frame(PadState& s, bool advance) {
 
     // ---- the game's menus (pointer, map, tabs, pause menu page keys) ----
     {
-        static const int kInventory = action_index("Inventory"), kJournal = action_index("Journal");
+        static const int kInventory = action_index("Inventory"), kJournal = action_index("Journal"),
+                         kSystem = action_index("System");
         pcmenus::FrameIO io;
         const mouse::Pointer p = mouse::pointer();
         io.mouse_inside = sh.enabled && p.inside;
@@ -590,6 +602,8 @@ void frame(PadState& s, bool advance) {
         io.wheel = sh.enabled ? sh.menu_wheel : 0;
         io.inventory_key = sh.enabled && kInventory >= 0 && sh.pressed[kInventory];
         io.journal_key = sh.enabled && kJournal >= 0 && sh.pressed[kJournal];
+        io.system_key = sh.enabled && kSystem >= 0 && sh.pressed[kSystem];
+        io.in_play = pce_gameplay_camera();
         pcmenus::update(io);
         mouse::set_pointer_mode(io.pointer_mode);
         g_menu_out = {io.hold_add, io.override_l, io.override_r, io.lx, io.ly, io.rx, io.ry};

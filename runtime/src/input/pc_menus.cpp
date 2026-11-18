@@ -242,6 +242,18 @@ void update_pages(const pceui::State& st, FrameIO& io) {
         }
         if (g_log) LOG("pc menus: journal key (menu %s)", st.inventory ? "open" : "closed");
     }
+    if (io.system_key) {
+        // in play: pause menu on the System page; anywhere else (menus, map, dialogs, title): Back
+        const bool open_system = io.in_play && !st.inventory && !st.title && !st.dialog && !st.choice && !st.map;
+        if (open_system) {
+            request_page(Page::System, false);
+            g_close_frames = 0;
+            if (!g_confirm.busy()) g_confirm.start(BTN_PLUS);
+        } else if (!g_confirm.busy()) {
+            g_confirm.start(BTN_B);
+        }
+        if (g_log) LOG("pc menus: system key (%s)", open_system ? "open system" : "back");
+    }
     if (g_close_frames > 0) g_close_frames--, io.hold_add |= BTN_PLUS;
     if (g_page_target < 0) return;
     if (!st.inventory) {

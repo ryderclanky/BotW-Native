@@ -40,6 +40,9 @@ void click(int row, int dir);   // touch / mouse: dir -1/+1 on a row's arrows, 0
 // Pointer (mouse / touch) in drawable pixels, from the host event loop, for the overlay's ImGui.
 void pointer(float x, float y, bool down);
 void pointer_state(float* x, float* y, bool* down);
+// Mouse wheel notches while the menu is open (scrolls the long tabs); the overlay takes them each frame.
+void wheel(float y);
+float take_wheel();
 // Touch: the overlay records where it drew the panel and its X button (fractions of the screen, x0 y0 x1 y1).
 // A tap outside the panel or on the X closes the menu; touch_close() returns true when it did.
 void set_rects(const float panel[4], const float close_button[4]);

@@ -95,6 +95,7 @@ void LatteOverlay_render(bool padView) {
     menu::pointer_state(&px, &py, &down);
     io.AddMousePosEvent(px, py);
     io.AddMouseButtonEvent(0, down);
+    if (const float w = menu::take_wheel()) io.AddMouseWheelEvent(0, w);
 
     swkbd::View keyboard = swkbd::keyboard().view();
     if (keyboard.active) {
@@ -158,7 +159,9 @@ void LatteOverlay_render(bool padView) {
     ImGui::SetNextWindowBgAlpha(0.88f);
     if (ImGui::Begin("##menu", nullptr, overlay)) {
         ImGui::SetWindowFontScale(ui * 1.25f);
-        const float label_w = 150 * ui, value_w = 230 * ui;
+        // Keys tab: long action names, short key names -> wider name column (same panel width)
+        const bool keys_tab = v.tab < (int)v.tabs.size() && v.tabs[v.tab] == "Keys";
+        const float label_w = (keys_tab ? 235 : 150) * ui, value_w = (keys_tab ? 145 : 230) * ui;
         const float xs = ImGui::GetFrameHeight();  // X in the top-right corner, same height as a row
         const float panel_w = label_w + value_w + 24 * ui + xs;  // fixed width: the panel does not jump between tabs
         const ImVec4 gold = ImGui::ColorConvertU32ToFloat4(IM_COL32(255, 215, 90, 255));
