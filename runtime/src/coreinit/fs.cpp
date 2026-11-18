@@ -3,6 +3,7 @@
 // Enabled mods overlay content and aoc (runtime/src/coreinit/mods.cpp). The game dump is not written.
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #if defined(_WIN32)
@@ -246,6 +247,12 @@ int32_t open_file(PPCContext* c, const std::string& raw, const char* mode, uint3
     std::string hp;
     HostInfo info;
     bool overlay = false;
+    static const bool font_log = [] {
+        const char* e = getenv("BOTW_PCE_FS_LOG");
+        return e && *e && *e != '0';
+    }();
+    if (font_log && (gpath.find("Font") != std::string::npos || gpath.find("ResourceSizeTable") != std::string::npos))
+        LOG("FS open %s (raw \"%s\")", gpath.c_str(), raw.c_str());
     mods::Query q = mods::query(gpath);
     if (q.kind != mods::Query::Kind::Other) {
         if (q.kind == mods::Query::Kind::Dir) return fail(c, FS_NOT_FILE, mask, "open", gpath);

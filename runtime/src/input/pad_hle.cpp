@@ -16,6 +16,7 @@
 #include "../log.h"
 #include "../thread.h"
 #include "input.h"
+#include "pc_controls.h"
 #include "title_diag.h"
 
 namespace {
@@ -182,6 +183,7 @@ HLE_EXPORT(vpad, VPADRead) {
         return;
     }
     input::PadState s = input::gamepad();
+    pccontrols::frame(s, !this_is_sampling_thread());  // PC selectors (weapon / bow / shield / rune)
     mem::commit(buf, 0xAC, true);
     memset(mem::host(buf), 0, 0xAC);
     uint32_t hold = s.buttons;

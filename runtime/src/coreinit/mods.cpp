@@ -2670,10 +2670,34 @@ void apply_patches() {
     apply_patches_locked();
 }
 
+std::unordered_map<std::string, std::string> g_private_overrides;  // lower-case content rel -> host file
+
+void set_private_override(const std::string& content_rel, const std::string& host) {
+    std::lock_guard<std::recursive_mutex> lk(g_mods_mtx);
+    if (host.empty()) g_private_overrides.erase(lower_ascii(content_rel));
+    else g_private_overrides[lower_ascii(content_rel)] = host;
+}
+
 Query query(const std::string& guest) {
     std::lock_guard<std::recursive_mutex> lk(g_mods_mtx);
     Query q;
     GuestVol vol = parse_guest(guest);
+    if (vol.id == GuestVol::Id::Content && !g_private_overrides.empty()) {
+        auto it = g_private_overrides.find(lower_ascii(vol.rel));
+        uint64_t sz = 0;
+        if (it != g_private_overrides.end() && is_file(it->second, sz)) {
+            static std::unordered_map<std::string, bool> logged;
+            if (!logged[it->first]) {
+                logged[it->first] = true;
+                LOG("mods: %s served from %s (generated)", guest.c_str(), it->second.c_str());
+            }
+            q.kind = Query::Kind::File;
+            q.host = it->second;
+            q.overlay = true;
+            q.size = sz;
+            return q;
+        }
+    }
     if (vol.id != GuestVol::Id::Content && vol.id != GuestVol::Id::Aoc) return q;
     if (vol.id == GuestVol::Id::Aoc && g_no_dlc) {
         q.kind = Query::Kind::Missing;

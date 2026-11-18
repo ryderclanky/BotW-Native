@@ -1,0 +1,40 @@
+// PC keyboard/mouse actions (port of Zelda-on-PC's action bindings, src/pcedition/PCSettings.cpp, MPL-2.0,
+// https://github.com/mircea32000/Zelda-on-PC). Bindings live in pc_controls.ini in the user folder (written
+// with the defaults on first run). While enabled, they replace the keyboard half of the built-in map and of
+// controls.ini; controllers are not affected.
+#pragma once
+#include <SDL3/SDL.h>
+
+#include <stdint.h>
+
+namespace input {
+struct PadState;
+}
+
+namespace pccontrols {
+// Reads (or creates) pc_controls.ini. Call once the user folder is known.
+void load();
+bool active();
+// Level state of every bound key and mouse button, plus tap / click / wheel pulses, into s.
+void apply(SDL_Window* win, input::PadState& s);
+// Host event loop: a key went down (not a repeat). Keeps a short tap visible to VPADRead.
+void key_down(SDL_Scancode sc);
+// The key opens the overlay menu (Settings action).
+bool is_settings_key(SDL_Scancode sc);
+// Drop pending pulses (menu opened, keyboard shown).
+void clear_pulses();
+// VPADRead: weapon / bow / shield / rune selectors (hold 1-4 and move the mouse, or the wheel). They hold the
+// d-pad and flick the right stick once per step, so they run per game read; `advance` only on the game's own
+// reads (not the sampling thread), which see the latest output.
+void frame(input::PadState& s, bool advance);
+// A selector is open: mouse X steps it instead of turning the camera.
+bool owns_mouse();
+void log_bindings();
+
+// A binding (for the key prompts): type 0 none, 1 SDL scancode, 2 SDL mouse button, 3 wheel up, 4 wheel down.
+struct BoundKey {
+    int type = 0;
+    int code = 0;
+};
+BoundKey bound_key(const char* action_id, int slot);  // slot 0 or 1
+}  // namespace pccontrols

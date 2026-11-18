@@ -194,6 +194,9 @@ void set_patch_backend(PatchBackend backend);
 void apply_patches();
 
 Query query(const std::string& guest);
+// Files this build generates for itself (PC key prompts): /vol/content/<rel> is served from `host` ahead of
+// every mod. Kept outside the mods folder so a release build sharing the user folder does not load them.
+void set_private_override(const std::string& content_rel, const std::string& host);
 ListStatus list_dir(const std::string& guest, std::vector<DirItem>& out);
 bool read_only_volume(const std::string& guest);
 
