@@ -60,8 +60,9 @@ Read each HLE's exact argument/return use in `PCInput.cpp` when porting (e.g. `A
 
 Main camera (phase 3); zoomed aim 0x02B9250C + 0x02B92848/0x02B92A48, rune aim 0x02B94E30 + 0x02B95278/0x02B956B0,
 camera rune 0x02BCED3C + 0x02BCF698, lock-on 0x02BF0234 (phase 7); climbing 0x02BEE0F8, conversation 0x02BCB3A0,
-horse 0x02BD2A44, Master Cycle 0x02BDFB20 (phase 8). 0x020D72D0 only records that Magnesis is active
-(the lock-on hook then leaves that camera alone until phase 9). Every camera with mouse support calls `feed()` at
+horse 0x02BD2A44, Master Cycle 0x02BDFB20 (phase 8); shield surf, sand seal, waterfall and Magnesis with all
+their in-body patches from the table above (phase 9). While the Magnesis action 0x020D72D0 ticks, the lock-on hook leaves
+that camera to the Magnesis hooks. Every camera with mouse support calls `feed()` at
 its entry, which takes the mouse motion into the shared pending yaw/pitch; the zoomed ones (scope/bow, camera
 rune) use `mouse_sens_aim` (settings.ini, default 0.8, Zelda-on-PC's AimSensitivity).
 

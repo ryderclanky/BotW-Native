@@ -20,6 +20,8 @@
 // pose turned around the look-at point so its easing has nothing to catch up.
 // Climbing (0x02BEE0F8) / conversation (0x02BCB3A0): yaw / pitch in degrees added before the update. Horse
 // (0x02BD2A44) / Master Cycle Zero (0x02BDFB20): the eye of the pose turned around the look-at point.
+// Shield surf / sand seal / waterfall: added where the update adds the stick's turn. Magnesis with an object held:
+// see its section at the end (the view turns 1:1, the object follows at a limited speed).
 // While the mouse turns a camera, the right stick carries a deflection just past the deadzone so the game
 // stays in manual camera mode (input::mouse::manual_stick).
 //
@@ -29,6 +31,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <string>
 
 #include "../input/mouse.h"
 #include "../settings.h"
@@ -54,11 +57,6 @@ bool pce_gameplay_camera() { return now_ms() - g_cam_seen_ms.load() < 150; }
 std::atomic<int64_t> g_bow_cam_ms{-1000000};
 bool pce_bow_camera() { return now_ms() - g_bow_cam_ms.load() < 150; }
 
-// Entries (after stwu) of the other player cameras; phase 9 adds their mouse rotation here.
-BOTW_HOOK(0x02be8b30) { note_camera(); }  // shield surf
-BOTW_HOOK(0x02bf5acc) { note_camera(); }  // sand seal
-BOTW_HOOK(0x02bf8f88) { note_camera(); }  // Zora waterfall
-
 namespace {
 constexpr double kDegPerCount = 0.022;  // camera degrees per mouse count at sensitivity 1 (Source-style)
 constexpr double kGameYawSign = -1.0;   // game delta sign relative to "camera turns right"
@@ -77,6 +75,7 @@ double g_pending_yaw = 0, g_pending_pitch = 0;  // degrees, right / up positive
 int g_yaw_age = 0, g_pitch_age = 0;  // camera updates since the pending value was last consumed
 float g_norm_delta = 0;  // mouse pitch in the controller's normalized pitch units, this update
 std::atomic<int64_t> g_magnet_ms{-1000000};  // Magnesis action updated (it drives the lock-on camera class)
+bool magnet_active() { return now_ms() - g_magnet_ms.load() < 100; }
 float g_spin = [] {
     const char* s = std::getenv("BOTW_PCE_SPIN");
     return s ? (float)std::atof(s) : 0.0f;
@@ -102,10 +101,44 @@ double wrap180(double a) {
     return a - 180.0;
 }
 
+// BOTW_PCE_INPUT_LOG: log the set of cameras with mouse support that updated in the last 150 ms whenever it
+// changes ("pce camera: horse"), so a play-tester can see which one is turning the view. A set, not the last
+// one, since two can update in the same frame.
+const bool g_cam_log = [] {
+    const char* s = std::getenv("BOTW_PCE_INPUT_LOG");
+    return s && *s && *s != '0';
+}();
+void log_camera(const char* name) {
+    constexpr int kMax = 16;
+    static const char* names[kMax];
+    static int64_t seen[kMax];
+    static int count = 0;
+    static uint32_t logged = 0;
+    const int64_t t = now_ms();
+    int i = 0;
+    while (i < count && names[i] != name) i++;
+    if (i == count) {
+        if (count == kMax) return;
+        names[count++] = name;
+    }
+    seen[i] = t;
+    uint32_t set = 0;
+    for (int k = 0; k < count; k++)
+        if (t - seen[k] < 150) set |= 1u << k;
+    if (set == logged) return;
+    logged = set;
+    std::string s;
+    for (int k = 0; k < count; k++)
+        if (set & (1u << k)) s += (s.empty() ? "" : " + ") + std::string(names[k]);
+    LOG("pce camera: %s", s.c_str());
+}
+
 // A camera with mouse support updates: take the mouse motion since the last one into the pending rotation.
-// zoomed: the aiming sensitivity applies (bow drawn, scope, camera rune). gameplay: the camera counts as Link
-// being in play (pce_gameplay_camera); not the conversation camera, where mouse buttons stay inert.
-void feed(bool zoomed, bool gameplay = true) {
+// name: for the camera log. zoomed: the aiming sensitivity applies (bow drawn, scope, camera rune). gameplay:
+// the camera counts as Link being in play (pce_gameplay_camera); not the conversation camera, where mouse
+// buttons stay inert.
+void feed(const char* name, bool zoomed, bool gameplay = true) {
+    if (g_cam_log) log_camera(name);
     if (gameplay) note_camera();
     if (pccontrols::owns_mouse()) {  // an open selector steps with the mouse; the camera stays
         input::mouse::take();
@@ -193,7 +226,7 @@ BOTW_HOOK(0x02b9b8a0) {  // main camera update entry, after stwu: r3 = camera co
     }
     g_cam_ticks++;
     g_norm_delta = 0;
-    feed(false);
+    feed("main", false);
 }
 
 BOTW_HOOK(0x02b9c950) {  // fmuls f13,f10,f6: yaw rotation this frame; r31 = camera controller
@@ -228,7 +261,7 @@ BOTW_HOOK(0x02b9c1ac) {  // fadds f23,f23,f1: pitch += delta (automatic path)
 // ---- zoomed aim camera (scope, bow drawn) ----
 BOTW_HOOK(0x02b9250c) {  // update entry, after stwu
     g_bow_cam_ms = now_ms();
-    feed(true);
+    feed("scope/bow", true);
 }
 
 BOTW_HOOK(0x02b92848) {  // fmadds f1,f26,f10,f11: f1 = new pitch (degrees) = old + stick delta
@@ -241,7 +274,7 @@ BOTW_HOOK(0x02b92a48) {  // fmuls f1,f27,f8: f1 = yaw delta (degrees, after the 
 }
 
 // ---- rune aim camera (Magnesis, Stasis, Cryonis: not zoomed, normal sensitivity) ----
-BOTW_HOOK(0x02b94e30) { feed(false); }  // update entry, after stwu
+BOTW_HOOK(0x02b94e30) { feed("rune aim", false); }  // update entry, after stwu
 
 BOTW_HOOK(0x02b95278) {  // lfs f1,0x134(r31): pitch (degrees) before clamping / normalization
     const double p = aim_pitch();
@@ -254,7 +287,7 @@ BOTW_HOOK(0x02b956b0) {  // fmuls f1,f26,f9: yaw delta, base at r1+0x10 (same la
 
 // ---- camera rune (the Sheikah Slate's camera; zoomed, aiming sensitivity) ----
 BOTW_HOOK(0x02bced3c) {  // update entry, after stwu: r3 = camera; pitch in degrees at +0x28 (game limits -70..75)
-    feed(true);
+    feed("camera rune", true);
     const double p = kGamePitchSign * take(g_pending_pitch, g_pitch_age);
     const uint32_t cam = c->r[3];
     if (p != 0 && mem::readable(cam + 0x28, 4)) mem::wf32(cam + 0x28, (float)(mem::rf32(cam + 0x28) + p));
@@ -267,14 +300,9 @@ BOTW_HOOK(0x02bcf698) {  // fmadds f1,f31,f27,f12: f1 = stick x * rate + current
 }
 
 // ---- lock-on camera (Z-targeting; its class is also the Magnesis camera) ----
-BOTW_HOOK(0x020d72d0) {  // Magnesis action update entry: the rune turns that camera itself (phase 9)
-    note_camera();
-    g_magnet_ms = now_ms();
-}
-
 BOTW_HOOK(0x02bf0234) {  // update entry, after stwu: r3 = camera; yaw +0xAC, pitch +0xA8 (degrees)
-    if (now_ms() - g_magnet_ms.load() < 50) return note_camera();
-    feed(false);
+    if (magnet_active()) return note_camera();  // Magnesis turns this camera itself (0x02BF02A8)
+    feed("lock-on", false);
     const double yaw = take(g_pending_yaw, g_yaw_age);
     const double pitch = take(g_pending_pitch, g_pitch_age);
     const uint32_t cam = c->r[3];
@@ -288,8 +316,8 @@ BOTW_HOOK(0x02bf0234) {  // update entry, after stwu: r3 = camera; yaw +0xAC, pi
 namespace {
 // Climbing and conversation keep yaw / pitch in degrees (stick right / up lower them) and add the stick to them:
 // the mouse rotation is added right before the update, which normalises and clamps them itself.
-void orbit_tick(PPCContext* c, uint32_t yaw_off, uint32_t pitch_off, bool gameplay) {
-    feed(false, gameplay);
+void orbit_tick(PPCContext* c, const char* name, uint32_t yaw_off, uint32_t pitch_off, bool gameplay) {
+    feed(name, false, gameplay);
     const double yaw = take(g_pending_yaw, g_yaw_age);
     const double pitch = take(g_pending_pitch, g_pitch_age);
     const uint32_t cam = c->r[3];
@@ -301,15 +329,178 @@ void orbit_tick(PPCContext* c, uint32_t yaw_off, uint32_t pitch_off, bool gamepl
 // Horse and Master Cycle take yaw / pitch from their pose every frame: the eye is turned around the look-at
 // point before the update (game pitch limits -40..60). The manual-mode stick nudge keeps the camera from
 // swinging back behind the mount, as a touch of the stick does.
-void mount_tick(PPCContext* c) {
-    feed(false);
+void mount_tick(PPCContext* c, const char* name) {
+    feed(name, false);
     const double yaw = take(g_pending_yaw, g_yaw_age);
     const double pitch = take(g_pending_pitch, g_pitch_age);
     turn_eye(c->r[3], yaw, pitch, -40.0, 60.0);
 }
 }  // namespace
 
-BOTW_HOOK(0x02bee0f8) { orbit_tick(c, 0x98, 0x8c, true); }  // climbing (walls, ladders): game clamps pitch +-70
-BOTW_HOOK(0x02bcb3a0) { orbit_tick(c, 0x48, 0x40, false); }  // conversation: game clamps pitch -40..60
-BOTW_HOOK(0x02bd2a44) { mount_tick(c); }  // horse
-BOTW_HOOK(0x02bdfb20) { mount_tick(c); }  // Master Cycle Zero
+BOTW_HOOK(0x02bee0f8) { orbit_tick(c, "climbing", 0x98, 0x8c, true); }  // climbing (walls, ladders): game clamps pitch +-70
+BOTW_HOOK(0x02bcb3a0) { orbit_tick(c, "conversation", 0x48, 0x40, false); }  // conversation: game clamps pitch -40..60
+BOTW_HOOK(0x02bd2a44) { mount_tick(c, "horse"); }  // horse
+BOTW_HOOK(0x02bdfb20) { mount_tick(c, "Master Cycle"); }  // Master Cycle Zero
+
+// ---- shield surf, sand seal, Zora waterfall ----
+// Their cameras turn by the stick only while it is deflected (the manual-mode stick nudge keeps them so while the
+// mouse moves); the mouse rotation is added where the update adds the stick's turn. When the stick is let go they
+// ease back behind Link, as with the GamePad.
+// Shield surf 0x02BE8B30: state byte +0x1C2 is 5 while the stick is deflected; pitch +0xA4 read at 0x02BE8EF8 (r29 =
+// camera, used in that state only), yaw at 0x02BE9698 (f1 = current yaw f30 + stick turn f0, degrees).
+// Sand seal 0x02BF5ACC: the same kind of camera, state +0x1EA == 4, pitch +0xA0 at 0x02BF5E80 (r30), yaw 0x02BF65E8.
+// Waterfall 0x02BF8F88: yaw only, at 0x02BF914C (f1 = current yaw f31 + stick turn f30).
+namespace {
+void surf_pitch(PPCContext* c, uint32_t cam, uint32_t state_off, uint8_t manual_state) {
+    if (!mem::readable(cam + state_off, 1) || mem::r8(cam + state_off) != manual_state) return;
+    const double p = take(g_pending_pitch, g_pitch_age);
+    if (p != 0) set_fs(c, 1, std::clamp(c->f[1] + kGamePitchSign * p, -80.0, 80.0));
+}
+void surf_yaw(PPCContext* c) {
+    const double y = take(g_pending_yaw, g_yaw_age);
+    if (y != 0) set_fs(c, 1, c->f[1] + kGameYawSign * y);
+}
+}  // namespace
+
+BOTW_HOOK(0x02be8b30) { feed("shield surf", false); }                          // shield surf update entry
+BOTW_HOOK(0x02be8ef8) { surf_pitch(c, c->r[29], 0x1c2, 5); }    // lfs f1,0xa4(r29)
+BOTW_HOOK(0x02be9698) { surf_yaw(c); }                          // fadds f1,f30,f0
+BOTW_HOOK(0x02bf5acc) { feed("sand seal", false); }                          // sand seal update entry
+BOTW_HOOK(0x02bf5e80) { surf_pitch(c, c->r[30], 0x1ea, 4); }    // lfs f1,0xa0(r30)
+BOTW_HOOK(0x02bf65e8) { surf_yaw(c); }                          // fadds f1,f27,f8
+BOTW_HOOK(0x02bf8f88) {  // waterfall update entry: no pitch control on this camera
+    feed("waterfall", false);
+    g_pending_pitch = 0;
+}
+BOTW_HOOK(0x02bf914c) { surf_yaw(c); }                          // fadds f1,f31,f30
+
+// ---- Magnesis with an object held ----
+// No camera reads the stick here: the rune's action (update 0x020D72D0) keeps where the object is held around Link:
+// direction +0xA8 (radians), height +0xA4 and distance +0xA0 (metres); the stick turns the direction by 60 degrees
+// per second at most. The camera (the lock-on class, update 0x02BF0234) frames Link and the object: it asks where the
+// object is (0x02BD8A30: three copies of the position at camera +0x40 / +0x4C / +0x58), follows its direction with a
+// dead zone of 5 degrees (smoothed direction at camera +0x90, degrees) and eases its eye / look-at point after that.
+// With the mouse the view turns at once and the object swings after it:
+//  - the camera rig (eye, look-at point, smoothed direction) is turned by the mouse around Link (pose +0x7D4) before
+//    the camera's own update (0x02BF02A8), so the view follows the mouse 1:1;
+//  - the action's direction follows the view at a limited speed (kMagnetFollow*): an object far behind its direction
+//    is taken for a stuck one, pulled closer and dropped;
+//  - the object position given to the camera is turned by what the object still has to do to reach the view (lead,
+//    0x02BD8AB8), so the camera's smoothing sees nothing to correct and does not pull the view back;
+//  - the game shortens the distance when the object is more than 1 m nearer than it is held at, measured to a
+//    smoothed position of the object that cuts the corner on quick turns; while the mouse turns the object that
+//    measurement is not allowed below the distance to where the object really is (0x020D6DB0).
+// Up / down moves the object by the same angle as seen from Link (the game limits the height).
+namespace {
+constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+constexpr double kMagnetFollowDeg = 360.0;    // degrees per second the object may follow the view at most
+constexpr double kMagnetFollowMetres = 40.0;  // ... and metres per second (less angle for a far object)
+constexpr uint32_t kMagnetStatePtr = 0x10467be0;  // the game's magnet state (object positions +0xB0, index +0x11C)
+
+struct Magnet {
+    double rig_yaw = 0;        // degrees the view was turned by the mouse and the camera rig not yet
+    double backlog_yaw = 0;    // degrees the view is ahead of the action's direction
+    double backlog_pitch = 0;  // the same for up / down
+    double direction = 0;      // the action's direction (degrees) as the last update left it
+    double pending = 0;        // change of the view's direction the camera has not been told about yet
+    double lead = 0;           // degrees the view is ahead of the object, as the camera sees it
+    double object_yaw = 0;     // direction of the object from Link when the camera last asked
+    bool has_direction = false, has_object = false;
+    double last_t = 0;
+    double last_turn_t = -1e9;  // when the mouse last turned the action's direction
+    uint32_t pose = 0;          // pose of the camera in the update that is running
+} g_mag;
+
+double secs() { return std::chrono::duration<double>(Clock::now().time_since_epoch()).count(); }
+
+// Turns a point (x, y, z floats) around a vertical axis; angles grow from +z towards +x like atan2(x, z).
+void turn_around(uint32_t point, double cx, double cz, double degrees) {
+    const double a = degrees * kDegToRad, co = std::cos(a), si = std::sin(a);
+    const double x = mem::rf32(point) - cx, z = mem::rf32(point + 8) - cz;
+    mem::wf32(point, (float)(cx + x * co + z * si));
+    mem::wf32(point + 8, (float)(cz + z * co - x * si));
+}
+}  // namespace
+
+BOTW_HOOK(0x020d72d0) {  // Magnesis action update entry, after stwu: r3 = action
+    const int64_t t_ms = now_ms();
+    const bool resumed = t_ms - g_magnet_ms.exchange(t_ms) > 100;
+    feed("Magnesis", false);
+    const double yaw = kGameYawSign * take(g_pending_yaw, g_yaw_age);
+    const double pitch = take(g_pending_pitch, g_pitch_age);
+    const uint32_t action = c->r[3];
+    if (!mem::readable(action, 0xb0)) return;
+    const double now = secs();
+    if (resumed) {
+        g_mag = {};
+        g_mag.last_t = now;
+    }
+    const double dt = std::clamp(now - g_mag.last_t, 1.0 / 240.0, 1.0 / 20.0);
+    g_mag.last_t = now;
+    const double distance = std::clamp((double)mem::rf32(action + 0xa0), 1.0, 100.0);
+    const double max_step = std::min(kMagnetFollowDeg, kMagnetFollowMetres / distance / kDegToRad) * dt;
+
+    // what the stick turned in the last update belongs to the view as well
+    const double before = mem::rf32(action + 0xa8) / kDegToRad;
+    const double stick = g_mag.has_direction ? before - g_mag.direction : 0.0;
+    g_mag.backlog_yaw = wrap180(g_mag.backlog_yaw + yaw);
+    const double step_yaw = std::clamp(g_mag.backlog_yaw, -max_step, max_step);
+    g_mag.backlog_yaw -= step_yaw;
+    if (step_yaw != 0) {
+        mem::wf32(action + 0xa8, (float)((before + step_yaw) * kDegToRad));
+        g_mag.last_turn_t = now;
+    }
+    g_mag.direction = mem::rf32(action + 0xa8) / kDegToRad;
+    g_mag.has_direction = true;
+    g_mag.pending += yaw + stick;
+    g_mag.rig_yaw += yaw;
+
+    g_mag.backlog_pitch = std::clamp(g_mag.backlog_pitch + pitch, -60.0, 60.0);
+    const double step_pitch = std::clamp(g_mag.backlog_pitch, -max_step, max_step);
+    g_mag.backlog_pitch -= step_pitch;
+    if (step_pitch != 0)
+        mem::wf32(action + 0xa4, mem::rf32(action + 0xa4) + (float)(distance * std::tan(step_pitch * kDegToRad)));
+}
+
+BOTW_HOOK(0x02bf02a8) {  // or. r27,r3,r3 in the camera update: r3 = camera pose (0 = none), r29 = camera
+    const uint32_t pose = c->r[3], cam = c->r[29];
+    const bool active = magnet_active() && pose != 0 && mem::readable(pose + 0x550, 0x290) && mem::readable(cam, 0x94);
+    const double turn = g_mag.rig_yaw;
+    g_mag.rig_yaw = 0;
+    g_mag.pose = active ? pose : 0;
+    if (!active || turn == 0) return;
+    const double cx = mem::rf32(pose + 0x7d4), cz = mem::rf32(pose + 0x7dc);
+    turn_around(pose + 0x550, cx, cz, turn);
+    turn_around(pose + 0x55c, cx, cz, turn);
+    mem::wf32(cam + 0x90, (float)wrap180(mem::rf32(cam + 0x90) + turn));
+}
+
+BOTW_HOOK(0x02bd8ab8) {  // lwz r0,0x14(r1): the camera (r31) has just been given the object's position
+    const uint32_t cam = c->r[31], pose = g_mag.pose;
+    if (pose == 0 || !mem::readable(cam, 0x64)) return;
+    const double cx = mem::rf32(pose + 0x7d4), cz = mem::rf32(pose + 0x7dc);
+    const double object_yaw = std::atan2(mem::rf32(cam + 0x58) - cx, mem::rf32(cam + 0x60) - cz) / kDegToRad;
+    // what the view has turned since the last time, less what the object has done of it
+    g_mag.lead = wrap180(g_mag.lead + g_mag.pending - (g_mag.has_object ? wrap180(object_yaw - g_mag.object_yaw) : 0.0));
+    g_mag.pending = 0;
+    g_mag.object_yaw = object_yaw;
+    g_mag.has_object = true;
+    if (std::fabs(g_mag.lead) < 0.001) g_mag.lead = 0;
+    if (g_mag.lead == 0) return;
+    for (const uint32_t copy : {cam + 0x40, cam + 0x4c, cam + 0x58}) turn_around(copy, cx, cz, g_mag.lead);
+}
+
+BOTW_HOOK(0x020d6db0) {  // fsubs f11,f1,f29 after bl 0x03C6FD44: f1 = distance to the object's smoothed position
+    // Link's position at r1+0x38. While the mouse turns the object, measure no shorter than to where it really is.
+    if (!magnet_active() || secs() - g_mag.last_turn_t >= 1.0 || !mem::readable(kMagnetStatePtr, 4)) return;
+    const uint32_t state = mem::r32(kMagnetStatePtr), link = c->r[1] + 0x38;
+    if (state == 0 || !mem::readable(state, 0x120) || !mem::readable(link, 12)) return;
+    const uint32_t index = mem::r32(state + 0x11c);
+    const uint32_t object = state + 0xb0 + (index < 2 ? index * 0xc : 0);
+    const double dx = (double)mem::rf32(object) - mem::rf32(link), dz = (double)mem::rf32(object + 8) - mem::rf32(link + 8);
+    const double real = std::sqrt(dx * dx + dz * dz);
+    if (real > c->f[1] && real < 200.0) {
+        set_fs(c, 1, real);
+        set_fs(c, 11, (float)c->f[1] - (float)c->f[29]);
+    }
+}
