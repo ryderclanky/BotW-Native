@@ -51,6 +51,9 @@ const char* action_name(int i);
 std::string binding_text(int i, int slot);  // SDL key name / MouseLeft / WheelUp ..., "" = unbound
 void set_binding(int i, int slot, int type, int code);  // type as BoundKey (0 = clear)
 void reset_bindings();
+// key mode of Motion Control (which = 0) / Walk (1) / Sprint (2): true = a press toggles, false = active while held
+bool hold_toggle(int which);
+void set_hold_toggle(int which, bool toggle);
 // Short label of an action's first bound key ("E", "Space", "LMB"), for the HUD keys; "" if unbound.
 std::string key_label(const char* action_id);
 }  // namespace pccontrols

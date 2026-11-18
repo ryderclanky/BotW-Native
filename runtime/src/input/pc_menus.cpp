@@ -38,6 +38,7 @@ Pulse g_nav, g_confirm;
 // pointer navigation
 uint32_t g_frame = 0;
 uint32_t g_pending_part = 0, g_pending_frame = 0;  // a click waits for the selection to reach this target
+uint32_t g_pending_btn = BTN_A;                    // ... and presses this (d-pad left / right on an option's arrows)
 uint32_t g_last_move_frame = 0;
 float g_last_mx = -1, g_last_my = -1;
 int g_last_selected = -2;
@@ -226,6 +227,69 @@ void reset_pointer() {
     g_rot_drag = false;
 }
 
+// save / load keys (Zelda-on-PC PCMenus UpdateMacro): open the pause menu on its System page, find the Save / Load
+// button and confirm it through the pointer logic. The game then shows its own Save prompt / Load list.
+enum class Macro { None, OpenMenu, FindButton, Select, Verify };
+Macro g_macro = Macro::None;
+const char* g_macro_label = "";
+uint32_t g_macro_frame = 0;
+int g_macro_tries = 0;
+
+void update_macro(const pceui::State& st, FrameIO& io) {
+    if ((io.save_key || io.load_key) && g_macro == Macro::None && !st.title && !st.dialog && !st.choice) {
+        g_macro = Macro::OpenMenu;
+        g_macro_label = io.save_key ? "Save" : "Load";
+        g_macro_frame = g_frame;
+        g_macro_tries = 0;
+        if (!st.inventory) pceui::set_pause_start_page(start_page_code(Page::System));
+        if (g_log) LOG("pc menus: %s key", g_macro_label);
+    }
+    switch (g_macro) {
+        case Macro::None: return;
+        case Macro::OpenMenu:
+            if (st.inventory) {
+                g_macro = Macro::FindButton;
+                g_macro_frame = g_frame;
+            } else if (g_frame - g_macro_frame == 1) {
+                if (!g_confirm.busy()) g_confirm.start(BTN_PLUS);
+            } else if (g_frame - g_macro_frame > 150) {
+                g_macro = Macro::None;  // the pause menu is not available right now
+            }
+            break;
+        case Macro::FindButton: {
+            const pceui::Pointer& ps = pceui::pointer();
+            const int t = ps.find_label(g_macro_label);
+            if (t >= 0) {
+                g_pending_part = ps.targets[t].part;
+                g_pending_frame = g_frame;
+                g_pending_btn = BTN_A;
+                g_macro = Macro::Select;
+            } else if (g_frame - g_macro_frame > 20) {
+                // another page is shown (the menu was already open): step toward the System page
+                if (++g_macro_tries > 6) g_macro = Macro::None;
+                else {
+                    if (!g_confirm.busy()) g_confirm.start(BTN_R);
+                    g_macro_frame = g_frame;
+                }
+            }
+            break;
+        }
+        case Macro::Select:
+            if (g_pending_part == 0) {  // confirmed by the pointer logic (ignored while the menu is still opening)
+                g_macro = Macro::Verify;
+                g_macro_frame = g_frame;
+            }
+            break;
+        case Macro::Verify:
+            if (st.dialog || st.choice || !st.inventory) g_macro = Macro::None;  // the save / load window is up
+            else if (g_frame - g_macro_frame > 14) {
+                g_macro = ++g_macro_tries > 8 ? Macro::None : Macro::FindButton;
+                g_macro_frame = g_frame;
+            }
+            break;
+    }
+}
+
 // pause menu: I lands on the inventory, J on the adventure log (J again closes it)
 void update_pages(const pceui::State& st, FrameIO& io) {
     const Page cur = st.inventory ? detect_page(st, pceui::pointer()) : Page::None;
@@ -277,6 +341,7 @@ void update(FrameIO& io) {
     g_frame++;
     const pceui::State& st = pceui::state();
     update_pages(st, io);
+    update_macro(st, io);
     bool pointer_screen = pceui::pointer_screen(st) && !st.scope && !st.camera_rune;
     if (pointer_screen) {
         // only when the screen really offers something to point at (no cursor for a stale "shown" flag)
@@ -333,8 +398,27 @@ void update(FrameIO& io) {
                     else request_tab(ps.targets[hover].tab, ps.current_tab);
                 }
             } else {
-                g_pending_part = ps.targets[hover].part;
+                const pceui::Target& tg = ps.targets[hover];
+                g_pending_part = tg.part;
                 g_pending_frame = g_frame;
+                // the "<" / ">" of an option row step the value (d-pad left / right) instead of confirming
+                g_pending_btn = BTN_A;
+                for (int k = 0; k < 2; k++)
+                    if (tg.has_arrow[k] && io.mouse_x >= tg.arrow[k].x0 - 0.01f && io.mouse_x <= tg.arrow[k].x1 + 0.01f &&
+                        io.mouse_y >= tg.arrow[k].y0 - 0.02f && io.mouse_y <= tg.arrow[k].y1 + 0.02f)
+                        g_pending_btn = k == 0 ? BTN_LEFT : BTN_RIGHT;
+                // option rows have no arrow panes of their own: a click on the outer ends of a value box (the
+                // "<" / ">" spots) steps it. Plain menu buttons ignore d-pad left/right; the inventory/map grids don't.
+                const float bw = tg.rect.x1 - tg.rect.x0;
+                if (g_pending_btn == BTN_A && !st.inventory && !st.map && bw > 0.12f && bw < 0.4f) {
+                    if (io.mouse_x < tg.rect.x0 + bw * 0.13f) g_pending_btn = BTN_LEFT;
+                    else if (io.mouse_x > tg.rect.x1 - bw * 0.13f) g_pending_btn = BTN_RIGHT;
+                }
+                if (g_log)
+                    LOG("pc menus: click part hit=[%.3f %.3f %.3f %.3f] mouse=(%.3f %.3f) arrows=%d%d -> %s", tg.rect.x0,
+                        tg.rect.y0, tg.rect.x1, tg.rect.y1, io.mouse_x, io.mouse_y, tg.has_arrow[0], tg.has_arrow[1],
+                        g_pending_btn == BTN_LEFT ? "left" : g_pending_btn == BTN_RIGHT ? "right" : "A");
+                if (g_log) LOG("pc menus: click part panes=[%s]", tg.names.c_str());
             }
         }
         if (io.rmb_pressed && !g_confirm.busy()) g_confirm.start(BTN_B);
@@ -451,7 +535,7 @@ void update(FrameIO& io) {
     if (reached) {
         if (!g_pending_part) g_hover_done_part = ps.targets[desired].part;
         else if (!g_confirm.busy() && !g_nav.busy()) {
-            g_confirm.start(BTN_A);
+            g_confirm.start(g_pending_btn);
             g_pending_part = 0;
         }
     }

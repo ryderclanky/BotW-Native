@@ -24,8 +24,10 @@
 #include "input.h"
 #include "mouse.h"
 #include "pc_menus.h"
+#include "../game/pc_ui.h"
 #include "pc_tilt.h"
 
+bool pce_gliding();  // game/pc_camera.cpp: the glide state ticked in the last 70 ms
 bool pce_gameplay_camera();  // game/pc_camera.cpp: a player camera updated in the last 150 ms
 bool pce_bow_camera();       // ... the zoomed aim camera (bow drawn)
 bool pce_map_screen();       // game/pc_ui.cpp: the world map is on screen
@@ -107,7 +109,7 @@ const ActionDef kActions[] = {
     {"MoveBack", "Move Back", MoveY, 0, -1, "S", ""},
     {"MoveLeft", "Move Left", MoveX, 0, -1, "A", ""},
     {"MoveRight", "Move Right", MoveX, 0, +1, "D", ""},
-    {"Walk", "Walk (hold)", Walk, 0, 0, "Left Ctrl", ""},
+    {"Walk", "Walk", Walk, 0, 0, "Left Ctrl", ""},
     {"Sprint", "Sprint / Cancel", Btn, BTN_B, 0, "Left Shift", ""},
     {"Jump", "Jump", Btn, BTN_X, 0, "Space", ""},
     {"Crouch", "Crouch", Btn, BTN_STICK_L, 0, "C", ""},
@@ -137,6 +139,8 @@ const ActionDef kActions[] = {
     // Escape: in play it opens the pause menu on the System page; in any menu or dialog it backs out (B), see
     // pc_menus. (Zelda-on-PC opens its settings with it; here that is F1.)
     {"System", "System Menu / Back", Journal, 0, 0, "Escape", ""},
+    {"SaveMenu", "Save (opens the game's Save)", Journal, 0, 0, "F5", ""},
+    {"LoadMenu", "Load (opens the game's Load)", Journal, 0, 0, "F9", ""},
     {"CameraUp", "Camera Up", CamY, 0, +1, "", ""},
     {"CameraDown", "Camera Down", CamY, 0, -1, "", ""},
     {"CameraLeft", "Camera Left", CamX, 0, -1, "", ""},
@@ -167,7 +171,11 @@ float g_key_camera_speed = 0.75f;
 float g_wheel_release_ms = 450.0f;   // after the last wheel notch the selector closes (equips the item)
 float g_selector_mouse_step = 60.0f; // mouse counts per selector step while a selector key is held
 bool g_selector_invert_scroll = false;
-bool g_tilt_toggle = true;  // TiltMode toggles Motion Control (else: on while held)
+bool g_walk_toggle = false;  // Walk key toggles walking (else: walk while held)
+bool g_walk_latched = false;
+bool g_sprint_toggle = false;  // Sprint key toggles sprinting (B held) until pressed again
+bool g_sprint_latched = false;
+bool g_tilt_toggle = false;  // TiltMode toggles Motion Control (else: on while held)
 pctilt::Config g_tilt;
 std::atomic<bool> g_tilt_on{false};
 
@@ -217,10 +225,11 @@ bool write_file(const std::filesystem::path& file) {
             "selector_mouse_step=%g\nwheel_release_ms=%g\nselector_invert_scroll=%d\n"
             "# Motion Control (TiltMode): the mouse tilts the GamePad, the wheel turns it flat. tilt_toggle=0: on\n"
             "# while the key is held. Sensitivity x 0.05 degrees per count; degrees, ms, degrees per second.\n"
-            "tilt_toggle=%d\ntilt_sens=%g\ntilt_invert_x=%d\ntilt_invert_y=%d\ntilt_max_angle=%g\n"
+            "# walk_toggle=1: the Walk key switches walking on/off instead of walking while held\n"
+            "walk_toggle=%d\nsprint_toggle=%d\ntilt_toggle=%d\ntilt_sens=%g\ntilt_invert_x=%d\ntilt_invert_y=%d\ntilt_max_angle=%g\n"
             "tilt_return_speed=%g\ntilt_turn_step=%g\ntilt_invert_turn=%d\ntilt_smoothing=%g\ntilt_max_speed=%g\n\n",
             g_on ? 1 : 0, g_walk_speed, g_key_camera_speed, g_selector_mouse_step, g_wheel_release_ms,
-            g_selector_invert_scroll ? 1 : 0, g_tilt_toggle ? 1 : 0, g_tilt.sens, g_tilt.invert_x ? 1 : 0,
+            g_selector_invert_scroll ? 1 : 0, g_walk_toggle ? 1 : 0, g_sprint_toggle ? 1 : 0, g_tilt_toggle ? 1 : 0, g_tilt.sens, g_tilt.invert_x ? 1 : 0,
             g_tilt.invert_y ? 1 : 0, g_tilt.max_angle, g_tilt.return_speed, g_tilt.turn_step, g_tilt.invert_turn ? 1 : 0,
             g_tilt.smoothing_ms, g_tilt.max_speed);
     for (int i = 0; i < kCount; i++) {
@@ -266,6 +275,8 @@ void ensure() {
         else if (k == "selector_mouse_step") g_selector_mouse_step = std::clamp((float)atof(v.c_str()), 1.0f, 10000.0f);
         else if (k == "wheel_release_ms") g_wheel_release_ms = std::clamp((float)atof(v.c_str()), 50.0f, 5000.0f);
         else if (k == "selector_invert_scroll") g_selector_invert_scroll = atoi(v.c_str()) != 0;
+        else if (k == "sprint_toggle") g_sprint_toggle = atoi(v.c_str()) != 0;
+        else if (k == "walk_toggle") g_walk_toggle = atoi(v.c_str()) != 0;
         else if (k == "tilt_toggle") g_tilt_toggle = atoi(v.c_str()) != 0;
         else if (k == "tilt_sens") g_tilt.sens = std::clamp((float)atof(v.c_str()), 0.01f, 50.0f);
         else if (k == "tilt_invert_x") g_tilt.invert_x = atoi(v.c_str()) != 0;
@@ -384,6 +395,8 @@ void apply(SDL_Window* win, PadState& s) {
         return false;
     };
 
+    static const int kSprintIdx = find_action("Sprint");
+    if (!g_sprint_toggle) g_sprint_latched = false;
     float mx = 0, my = 0, cx = 0, cy = 0;
     bool walk = false;
     uint32_t bits = 0, tapped = 0;
@@ -415,6 +428,13 @@ void apply(SDL_Window* win, PadState& s) {
         sel_down[i] = down;
         switch (a.kind) {
             case Btn:
+                if (g_sprint_toggle && i == kSprintIdx) {
+                    // toggle: a press latches B (sprint) on, the next press lets go; only in gameplay
+                    if (!in_play) g_sprint_latched = false;
+                    else if ((down && !g_host_down[i]) || tap) g_sprint_latched = !g_sprint_latched;
+                    if (g_sprint_latched) bits |= action_bits(i, pointer);
+                    break;
+                }
                 if (down) bits |= action_bits(i, pointer);
                 if (tap) tapped |= action_bits(i, pointer);
                 break;
@@ -422,10 +442,17 @@ void apply(SDL_Window* win, PadState& s) {
             case MoveY: if (down) my += a.sign; break;
             case CamX: if (down) cx += a.sign; break;
             case CamY: if (down) cy += a.sign; break;
-            case Walk: walk |= down; break;
+            case Walk:
+                if (g_walk_toggle) {
+                    if ((down && !g_host_down[i]) || tap) g_walk_latched = !g_walk_latched;
+                } else
+                    walk |= down;
+                break;
             default: break;
         }
     }
+    if (g_walk_toggle) walk |= g_walk_latched;
+    else g_walk_latched = false;
     pulse(tapped);
     if (!in_play && notches && focused && pce_map_screen()) {
         // map: zoom with the right stick held up (wheel up = in) or down, ~5 frames per notch, at most 4 notches;
@@ -514,6 +541,7 @@ uint64_t g_sel_closed_ms = 0;
 std::atomic<bool> g_owns_mouse{false};
 // Output of the last advancing read, repeated on the sampling thread's reads.
 struct Out {
+    uint32_t remove = 0;  // GamePad buttons taken away (context controls: the key means another button now)
     uint32_t buttons = 0;
     bool stick = false;
     float rx = 0;
@@ -538,8 +566,116 @@ int action_index(const char* id) {
     return -1;
 }
 
+// ---- context controls (Zelda-on-PC PCInput.cpp): the game's own action guides decide what a key does ----
+struct Remap {
+    uint32_t remove = 0, add = 0;
+    int frames = 0;      // kept a few reads after the key is up (a quick click is a 50 ms pulse)
+    uint32_t latch = 0;  // after the guide is gone, the original button stays off until the key is released
+};
+Remap g_remap[kCount];
+bool g_climb_take = false;
+bool g_glide_close = false;  // the jump key is closing the paraglider (until it is released)
+uint64_t g_dodge_ms = 0;
+uint32_t g_pp_button = 0;  // Magnesis push / pull and scope zoom: d-pad held for some reads per wheel notch
+int g_pp_frames = 0;
+std::string g_ctx_log, g_guides_log;
+
+void context(const Shared& sh, int& wheel_steps, uint32_t& remove, uint32_t& add, uint64_t now) {
+    static const int kAttack = action_index("Attack"), kBow = action_index("Bow"), kInteract = action_index("Interact"),
+                     kJump = action_index("Jump"), kSprint = action_index("Sprint"), kTarget = action_index("Target");
+    const pceui::State& ui = pceui::state();
+    auto down = [&](int i) { return i >= 0 && (sh.down[i] || sh.pressed[i]); };
+    bool remapped[kCount] = {};
+    std::string names;
+    auto remap = [&](int a, uint32_t rem, uint32_t to, const char* why, bool latch = true) {
+        if (a < 0) return;
+        g_remap[a] = {rem, to, 3, latch ? rem : 0u};
+        remapped[a] = true;
+        names += names.empty() ? why : std::string(", ") + why;
+    };
+    if (g_log) {
+        std::string gl;
+        for (auto& g : ui.guides) gl += (gl.empty() ? "" : ", ") + g.text;
+        if (gl != g_guides_log) LOG("pc ui: guides [%s]", gl.c_str());
+        g_guides_log = gl;
+    }
+
+    if (down(kTarget) && kJump >= 0 && sh.pressed[kJump]) g_dodge_ms = now;
+    const bool after_dodge = g_dodge_ms && now - g_dodge_ms < 3000;
+    if (ui.has("Skip") && down(kInteract)) remap(kInteract, BTN_A, ui.button_for("Skip", BTN_X), "skip");
+    bool push_pull = false;
+    if (ui.scope || ui.camera_rune) {
+        // the keys its prompts show: click = Capture / Place pin, right click = Quit, wheel = zoom (d-pad up / down)
+        if (down(kAttack)) remap(kAttack, BTN_Y, BTN_A, "scope click");
+        if (down(kBow)) remap(kBow, BTN_ZR, BTN_B, "scope quit"), g_pp_frames = 0;
+        if (wheel_steps) {
+            const uint32_t b = wheel_steps < 0 ? BTN_UP : BTN_DOWN;  // wheel up = zoom in
+            if (g_pp_button != b) g_pp_frames = 0;
+            g_pp_button = b;
+            g_pp_frames = std::min(60, g_pp_frames + 5 * std::abs(wheel_steps));
+            wheel_steps = 0;
+        }
+        push_pull = true;
+    } else if (!ui.any_menu) {
+        if (ui.button_for("Dash", 0) == BTN_X && (down(kSprint) || down(kBow)))
+            remap(down(kSprint) ? kSprint : kBow, BTN_B | BTN_ZR, BTN_X, "swim dash", false);
+        if (ui.has("Let go")) {
+            const uint32_t let_go = ui.button_for("Let go", BTN_B);
+            // the interact key lets go of the wall, unless the game offers something on its own button (a fruit in
+            // reach: "Take"), decided when the key goes down
+            if (kInteract >= 0 && sh.pressed[kInteract]) g_climb_take = !ui.action_a.empty();
+            if (down(kInteract) && !g_climb_take) remap(kInteract, BTN_A, let_go, "let go");
+            if (!ui.has("Jump") && down(kJump)) remap(kJump, BTN_X, let_go, "let go (jump)");
+        }
+        if (!down(kInteract)) g_climb_take = false;
+        // paraglider (Zelda-on-PC): a new jump press while gliding puts it away (the game's B); the key stays
+        // remapped until it is released. Not with something in the hands ("Throw": a cucco glides on its own)
+        if (kJump >= 0 && sh.pressed[kJump] && pce_gliding() && !ui.has("Throw")) g_glide_close = true;
+        if (!down(kJump)) g_glide_close = false;
+        if (g_glide_close) remap(kJump, BTN_X, BTN_B, "close paraglider");
+        const bool cancel = ui.has("Cancel"), detonate = ui.has("Detonate"), throw_it = ui.has("Throw");
+        const bool held = ui.held_items();
+        if (throw_it && down(kAttack)) remap(kAttack, BTN_Y, ui.button_for("Throw", BTN_R), "throw");
+        else if (held && down(kAttack)) remap(kAttack, BTN_Y, ui.button_for("Drop", BTN_A), "drop");
+        else if (cancel && down(kAttack)) remap(kAttack, BTN_Y, BTN_A, "rune activate");
+        if (detonate && down(kBow)) remap(kBow, BTN_ZR, ui.button_for("Detonate", BTN_L), "detonate");
+        else if (cancel && down(kBow)) remap(kBow, BTN_ZR, ui.button_for("Cancel", BTN_B), "rune cancel");
+        else if (held && down(kBow)) remap(kBow, BTN_ZR, ui.button_for("Put away", BTN_B), "put away");
+        // Magnesis: the wheel pushes / pulls (never with something to throw: a bomb's Drop is not the d-pad)
+        push_pull = (ui.has("Push") || ui.has("Pull") || ui.has("Far") || ui.has("Near")) && !throw_it;
+        if (push_pull && wheel_steps) {
+            g_pp_button = wheel_steps < 0 ? BTN_UP : BTN_DOWN;
+            g_pp_frames = 6 * std::min(4, std::abs(wheel_steps));
+            wheel_steps = 0;
+        }
+        // shield up + attack key = perfect guard (not when the game offers something on Y, nor 3 s after a dodge:
+        // Flurry Rush needs the attack button)
+        if (down(kTarget) && down(kAttack) && !cancel && !throw_it && !held && !after_dodge && !ui.has_button(BTN_Y))
+            remap(kAttack, BTN_Y, BTN_A, "parry", false);
+    }
+    if (!push_pull) g_pp_frames = 0;
+    if (g_pp_frames > 0) g_pp_frames--, add |= g_pp_button;
+
+    for (int i = 0; i < kCount; i++) {
+        Remap& m = g_remap[i];
+        const bool d = sh.down[i] || sh.pressed[i];
+        if (remapped[i]) {
+            remove |= m.remove, add |= m.add;
+        } else if (m.frames > 0 && !d) {
+            m.frames--;  // the key is up already: the rest of a click's pulse is still the remapped button
+            remove |= m.remove, add |= m.add;
+        } else {
+            m.frames = 0;
+            if (!d) m.latch = 0;
+            remove |= m.latch;
+        }
+    }
+    if (g_log && names != g_ctx_log) LOG("pc controls: context %s", names.empty() ? "(none)" : names.c_str());
+    g_ctx_log = names;
+}
+
 void apply_out(PadState& s, const Out& o) {
-    s.buttons |= o.buttons;
+    s.buttons = (s.buttons & ~o.remove) | o.buttons;
     if (o.stick) {
         s.rx = o.rx;
         s.ry = 0;
@@ -584,7 +720,8 @@ void frame(PadState& s, bool advance) {
     // ---- the game's menus (pointer, map, tabs, pause menu page keys) ----
     {
         static const int kInventory = action_index("Inventory"), kJournal = action_index("Journal"),
-                         kSystem = action_index("System");
+                         kSystem = action_index("System"),
+                         kSaveMenu = action_index("SaveMenu"), kLoadMenu = action_index("LoadMenu");
         pcmenus::FrameIO io;
         const mouse::Pointer p = mouse::pointer();
         io.mouse_inside = sh.enabled && p.inside;
@@ -603,6 +740,8 @@ void frame(PadState& s, bool advance) {
         io.inventory_key = sh.enabled && kInventory >= 0 && sh.pressed[kInventory];
         io.journal_key = sh.enabled && kJournal >= 0 && sh.pressed[kJournal];
         io.system_key = sh.enabled && kSystem >= 0 && sh.pressed[kSystem];
+        io.save_key = sh.enabled && kSaveMenu >= 0 && sh.pressed[kSaveMenu];
+        io.load_key = sh.enabled && kLoadMenu >= 0 && sh.pressed[kLoadMenu];
         io.in_play = pce_gameplay_camera();
         pcmenus::update(io);
         mouse::set_pointer_mode(io.pointer_mode);
@@ -649,6 +788,12 @@ void frame(PadState& s, bool advance) {
     // aiming: the aim button held (mouse, key or controller) and a bow drawn (its camera is on)
     const bool aiming = (s.buttons & BTN_ZR) != 0 && pce_bow_camera();
 
+    // ---- context controls (needs the keys, not a menu with the pointer, not Motion Control) ----
+    uint32_t ctx_remove = 0, ctx_add = 0;
+    int wheel_steps = sh.wheel_steps;
+    if (enabled && !tilt && !mouse::pointer_mode()) context(sh, wheel_steps, ctx_remove, ctx_add, now);
+    s.buttons = (s.buttons & ~ctx_remove) | ctx_add;
+
     Sel& sel = g_sel;
     auto open = [&](int src, bool key_driven) {
         sel = {};
@@ -674,7 +819,7 @@ void frame(PadState& s, bool advance) {
             }
     // A selector of ours counts as the game's menu for a moment after closing: wheel steps right after go on.
     const bool own = sel.active ? sel.close_frame < 0 : (g_sel_closed_ms && now - g_sel_closed_ms < 250);
-    int steps = sh.wheel_steps * (g_selector_invert_scroll ? -1 : 1);
+    int steps = wheel_steps * (g_selector_invert_scroll ? -1 : 1);
     if (steps && (allowed || (own && enabled))) {
         if (!sel.active) open(action_index(steps > 0 ? "WeaponNext" : "WeaponPrev"), false);
         sel.pending += steps;
@@ -682,6 +827,8 @@ void frame(PadState& s, bool advance) {
     }
 
     Out o;
+    o.remove = ctx_remove;
+    o.buttons = ctx_add;
     if (sel.active && sel.close_frame >= 0) {
         // Bow selector closing: Link has an arrow nocked (the selector held the aim button), so letting go would
         // shoot. The d-pad is released first (equips), then the shot is cancelled with B for a few frames.
@@ -787,6 +934,19 @@ void set_binding(int i, int slot, int type, int code) {
     }
     g_keys[i][slot] = k;
     LOG("pc controls: %s %s = %s", kActions[i].id, slot ? "(second key)" : "", key_name(k).empty() ? "(none)" : key_name(k).c_str());
+    save();
+}
+
+bool hold_toggle(int which) {
+    ensure();
+    return which == 0 ? g_tilt_toggle : which == 1 ? g_walk_toggle : g_sprint_toggle;
+}
+
+void set_hold_toggle(int which, bool toggle) {
+    ensure();
+    (which == 0 ? g_tilt_toggle : which == 1 ? g_walk_toggle : g_sprint_toggle) = toggle;
+    g_walk_latched = g_sprint_latched = false;
+    LOG("pc controls: %s key = %s", which == 0 ? "Motion Control" : which == 1 ? "Walk" : "Sprint", toggle ? "toggle" : "hold");
     save();
 }
 

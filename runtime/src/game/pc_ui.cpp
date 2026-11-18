@@ -25,6 +25,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "../input/input.h"
 #include "../input/pc_controls.h"
 #include "../input/pc_prompts.h"
 #include "../log.h"
@@ -550,6 +551,69 @@ void refresh_do_command() {
 State g_state;
 uint32_t g_state_frame = 0xFFFFFFFF;
 
+uint32_t sibling(uint32_t pane, const std::string& name) {
+    const uint32_t parent = r32(pane + kParent);
+    if (!pane_ok(parent)) return 0;
+    const uint32_t head = parent + kChildHead;
+    uint32_t node = r32(head);
+    for (int i = 0; i < 256 && node && node != head; i++) {
+        if (!pane_ok(node)) return 0;
+        if (read_name(node) == name) return node;
+        node = r32(node + kNext);
+    }
+    return 0;
+}
+
+// first character of a UTF-8 string, as a code point (the button pictures are U+E040..)
+uint32_t first_code(const std::string& t) {
+    const unsigned char* u = (const unsigned char*)t.data();
+    if (t.size() >= 3 && (u[0] & 0xF0) == 0xE0) return ((u[0] & 0x0F) << 12) | ((u[1] & 0x3F) << 6) | (u[2] & 0x3F);
+    return t.empty() ? 0 : u[0];
+}
+
+uint32_t glyph_button(uint32_t g) {
+    switch (g) {
+        case 0xE040: return input::BTN_A;
+        case 0xE041: return input::BTN_B;
+        case 0xE042: return input::BTN_X;
+        case 0xE043: return input::BTN_Y;
+        case 0xE044: return input::BTN_L;
+        case 0xE045: return input::BTN_R;
+        case 0xE046: return input::BTN_ZL;
+        case 0xE047: return input::BTN_ZR;
+        default: return 0;
+    }
+}
+
+// one shown action guide text box (Zelda-on-PC PCUI.cpp State computation); g_mutex held
+void add_guide(State& st, uint32_t pane, const std::string& n, const std::string& text) {
+    const bool placeholder = text.size() >= 5 && text.compare(text.size() - 5, 5, "Guide") == 0;  // "YGuide"
+    if (starts(n, "T_GuideA_")) {
+        if (!placeholder) {
+            st.action_a = text;
+            st.guides.push_back({text, input::BTN_A});
+        }
+    } else if (n.size() == 11 && starts(n, "T_Guide") && n[8] == '_' && std::string("BXYL").find(n[7]) != std::string::npos) {
+        // the action ring's other buttons (Y: Flurry Rush, Sneakstrike, ...)
+        if (!placeholder)
+            st.guides.push_back({text, n[7] == 'B' ? input::BTN_B : n[7] == 'X' ? input::BTN_X : n[7] == 'Y' ? input::BTN_Y : input::BTN_L});
+    } else if (starts(n, "T_Guide_")) {
+        // guide list entry: the button is the picture in the sibling icon text box with the same suffix
+        uint32_t b = 0;
+        if (uint32_t icon = sibling(pane, "T_Icon_" + n.substr(8))) {
+            auto it = g_texts.find(icon);
+            if (it != g_texts.end()) b = glyph_button(first_code(it->second.text));
+        }
+        st.guides.push_back({text, b});
+    } else if (starts(n, "T_A_") && text.size() > 1) {
+        st.guides.push_back({text, input::BTN_A});
+    } else if (starts(n, "T_B_") && text.size() > 1) {
+        st.guides.push_back({text, input::BTN_B});
+    } else if (starts(n, "T_BX_") && text.size() > 1) {
+        st.guides.push_back({text, input::BTN_X});
+    }
+}
+
 void compute(State& st) {
     rebuild_roots();
     refresh_prompts();
@@ -573,10 +637,15 @@ void compute(State& st) {
         const std::string& n = ti.name;
         if (n.size() < 3 || n[0] != 'T' || n[1] != '_') continue;
         const bool pin = ti.text == "Place pin";
-        if (!pin && !starts(n, "T_Btn_")) continue;
+        const bool guide = starts(n, "T_Guide") || starts(n, "T_A_") || starts(n, "T_B_") || starts(n, "T_BX_");
+        if (!pin && !guide && !starts(n, "T_Btn_")) continue;
         if (!pane_ok(pane) || read_name(pane) != n || !visible(pane)) continue;
         if (pin) {
             st.scope = true;
+            continue;
+        }
+        if (guide) {
+            add_guide(st, pane, n, ti.text);
             continue;
         }
         if (ti.text.empty()) continue;
@@ -609,6 +678,8 @@ struct PartInfo {
     int arrow = 0;  // page arrow part: 1 left, 2 right
     bool arrow_shown = false;
     Rect arrow_rect;
+    std::vector<Rect> opt_arrows;  // arrow-like panes inside an entry (options: choice and slider rows)
+    std::string names;             // child pane names (debug log)
 };
 
 bool is_modal_screen(const std::string& name) {
@@ -678,6 +749,16 @@ void walk_layout(uint32_t root, bool box_cursor, Pointer& ps, std::vector<std::p
         } else if ((name == "N_ArrowL_00" || name == "N_ArrowR_00") && part) {
             auto pit = parts.find(part);
             if (pit != parts.end() && pit->second.arrow == (name[7] == 'L' ? 1 : 2)) pit->second.arrow_shown = true;
+        }
+        if (part && it.depth > 0) {
+            PartInfo& pi = parts[part];
+            if (pi.names.size() < 600) pi.names += name + ",";  // logged on click (INPUT_LOG)
+            // any arrow-like pane inside an entry ("<" / ">" of option rows): the side is decided later from its
+            // position relative to the entry's hit area
+            if (!starts(name, "Pa_Arrow") && name.find("Arrow") != std::string::npos) {
+                Rect ar;
+                if (rect_of(ar) && pi.opt_arrows.size() < 8) pi.opt_arrows.push_back(ar);
+            }
         }
         if (box_cursor) {
             if (name == "N_LT_00" || name == "N_RT_00" || name == "N_LB_00" || name == "N_RB_00")
@@ -777,6 +858,11 @@ void compute_pointer(Pointer& ps) {
         t.text_alpha = pi.label_alpha;
         t.group = pi.group;
         t.tab = pi.is_tab ? 0 : -1;
+        t.names = pi.names;
+        for (const Rect& ar : pi.opt_arrows) {
+            const int k = ar.cx() < pi.hit.cx() ? 0 : 1;
+            if (!t.has_arrow[k]) t.has_arrow[k] = true, t.arrow[k] = ar;
+        }
         const float hw = pi.hit.x1 - pi.hit.x0, hh = pi.hit.y1 - pi.hit.y0;
         if (on_screen(pi.hit) && hw > 0.02f && hh > 0.02f) t.rect = pi.hit;
         else if (pi.has_text && on_screen(pi.text)) {
@@ -856,6 +942,25 @@ void inventory_jump(PPCContext* c) {
     g_inv_flick = dir;
 }
 }  // namespace
+
+bool State::has(std::string_view text) const {
+    for (auto& g : guides)
+        if (g.text == text) return true;
+    return false;
+}
+bool State::has_button(uint32_t button) const {
+    for (auto& g : guides)
+        if (g.button == button) return true;
+    return false;
+}
+uint32_t State::button_for(std::string_view text, uint32_t fallback) const {
+    for (auto& g : guides)
+        if (g.text == text && g.button) return g.button;
+    return fallback;
+}
+bool State::held_items() const {
+    return !any_menu && has("Drop") && !has("Throw") && (has("Put away") || has("Far") || has("Near"));
+}
 
 // ---- hooks ---------------------------------------------------------------------------------------------------
 }  // namespace pceui

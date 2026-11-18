@@ -39,6 +39,9 @@ enum RowId {
     kMouseSensAim,
     kMouseInvX,
     kMouseInvY,
+    kTiltHold,
+    kWalkHold,
+    kSprintHold,
     kModReload,
     kKeyReset,
     kClose,
@@ -56,7 +59,7 @@ int g_key_slot = 0;                // first (0) or second (1) key of the selecte
 std::atomic<int> g_listen{-1};     // action waiting for a key press, -1 none
 const std::vector<int>& tab_rows(int t) {
     static const std::vector<int> graphics = {kFps, kWindowMode, kScale, kDisplay, kFilter, kGamepadView, kShowFps, kMods};
-    static const std::vector<int> controls = {kGyro, kRumble, kLayout, kTouch, kMouseCam, kMouseSens, kMouseSensY, kMouseSensAim, kMouseInvX, kMouseInvY};
+    static const std::vector<int> controls = {kGyro, kRumble, kLayout, kTouch, kMouseCam, kMouseSens, kMouseSensY, kMouseSensAim, kMouseInvX, kMouseInvY, kTiltHold, kWalkHold, kSprintHold};
     static const std::vector<int> audio = {kVolume};
     static const std::vector<int> about;
     switch (t) {
@@ -138,6 +141,9 @@ void step(Settings& s, int row, int dir) {
         case kMouseSensAim: s.mouse_sens_aim = std::clamp(roundf(s.mouse_sens_aim * 10 + dir) / 10, 0.1f, 3.0f); break;
         case kMouseInvX: s.mouse_invert_x = !s.mouse_invert_x; break;
         case kMouseInvY: s.mouse_invert_y = !s.mouse_invert_y; break;
+        case kTiltHold: pccontrols::set_hold_toggle(0, !pccontrols::hold_toggle(0)); break;
+        case kWalkHold: pccontrols::set_hold_toggle(1, !pccontrols::hold_toggle(1)); break;
+        case kSprintHold: pccontrols::set_hold_toggle(2, !pccontrols::hold_toggle(2)); break;
     }
 }
 
@@ -396,6 +402,9 @@ View view() {
     all[kMouseSensAim] = {"Mouse aiming speed", b};
     all[kMouseInvX] = {"Invert mouse X", s.mouse_invert_x ? "On" : "Off"};
     all[kMouseInvY] = {"Invert mouse Y", s.mouse_invert_y ? "On" : "Off"};
+    all[kTiltHold] = {"Motion Control key (T)", pccontrols::hold_toggle(0) ? "Toggle" : "Hold"};
+    all[kWalkHold] = {"Walk key", pccontrols::hold_toggle(1) ? "Toggle" : "Hold"};
+    all[kSprintHold] = {"Sprint key", pccontrols::hold_toggle(2) ? "Toggle" : "Hold"};
     all[kModReload] = {"Apply / Reload Overlay (R)", "", true};
     all[kClose] = {"Close", "", true};
     if (tab_now == kTabMods) {

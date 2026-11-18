@@ -32,6 +32,19 @@ struct State {
     bool camera_dialog = false; // ... asking about the picture just taken
     bool any_menu = false;      // the gameplay HUD is suspended by a menu
     bool hud = false;           // the gameplay HUD is shown
+    // the game's own action guides on screen ("Throw", "Let go", "Cancel", ...) with their GamePad button bit
+    // (input::BTN_*; 0 = unknown), English labels. Drive the context controls (pc_controls.cpp).
+    struct Guide {
+        std::string text;
+        uint32_t button = 0;
+    };
+    std::vector<Guide> guides;
+    std::string action_a;       // the A action of the action ring ("Take", "Open", ...), empty if none
+    bool has(std::string_view text) const;
+    bool has_button(uint32_t button) const;
+    uint32_t button_for(std::string_view text, uint32_t fallback) const;
+    // materials held in the hands (taken with "Hold" in the inventory): "Drop" + "Put away", no "Throw"
+    bool held_items() const;
 };
 
 struct Target {
@@ -42,6 +55,9 @@ struct Target {
     uint8_t text_alpha = 0;
     uint32_t group = 0;  // inventory page the entry belongs to, 0 = none
     int tab = -1;        // category tab index, -1 = not a tab
+    bool has_arrow[2] = {false, false};  // "<" / ">" panes inside the entry (options choice rows), if any
+    Rect arrow[2];
+    std::string names;  // child pane names (debug log)
 };
 
 struct Pointer {

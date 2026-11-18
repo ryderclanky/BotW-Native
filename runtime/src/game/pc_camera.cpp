@@ -54,6 +54,10 @@ void note_camera() { g_cam_seen_ms = now_ms(); }
 
 bool pce_gameplay_camera() { return now_ms() - g_cam_seen_ms.load() < 150; }
 
+// paraglider: the per-frame update of the player's glide state (Zelda-on-PC PCE_GlideTick, 0x02CB7004 "mr r30,r3")
+std::atomic<int64_t> g_glide_ms{-1000000};
+bool pce_gliding() { return now_ms() - g_glide_ms.load() < 70; }
+
 // The zoomed aim camera (bow drawn, scope) updated recently: the wheel steps arrows, not weapons.
 std::atomic<int64_t> g_bow_cam_ms{-1000000};
 bool pce_bow_camera() { return now_ms() - g_bow_cam_ms.load() < 150; }
@@ -224,6 +228,11 @@ void turn_eye(uint32_t cam, double yaw, double pitch, double min_pitch, double m
 }  // namespace
 
 // ---- main camera ----
+BOTW_HOOK(0x02cb7004) {  // mr r30,r3: Link is gliding this frame
+    (void)c;
+    g_glide_ms.store(now_ms());
+}
+
 BOTW_HOOK(0x02b9b8a0) {  // main camera update entry, after stwu: r3 = camera controller
     if (c->r[3] != g_cam) {
         LOG("pce: main camera controller 0x%08x (tick %llu)", c->r[3], (unsigned long long)g_cam_ticks);
