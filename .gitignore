@@ -31,3 +31,6 @@ ios/assets/Assets.xcassets/AppIcon.appiconset/*.png
 *.sbfres
 *.bfres
 keys.txt
+
+# machine-specific settings for tools/pce
+tools/pce/local.env
