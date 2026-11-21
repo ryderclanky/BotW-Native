@@ -267,6 +267,9 @@ int vk_of(const pccontrols::BoundKey& k) {
     if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) return '1' + (sc - SDL_SCANCODE_1);
     if (sc == SDL_SCANCODE_0) return '0';
     if (sc >= SDL_SCANCODE_F1 && sc <= SDL_SCANCODE_F12) return 0x70 + (sc - SDL_SCANCODE_F1);
+    // numpad: VK_NUMPAD0..9 (SDL has 1..9 then 0), * + - . / ; its Enter is VK_RETURN
+    if (sc >= SDL_SCANCODE_KP_1 && sc <= SDL_SCANCODE_KP_9) return 0x61 + (sc - SDL_SCANCODE_KP_1);
+    if (sc == SDL_SCANCODE_KP_0) return 0x60;
     static const std::pair<int, int> kMap[] = {
         {SDL_SCANCODE_BACKSPACE, 0x08}, {SDL_SCANCODE_TAB, 0x09},       {SDL_SCANCODE_RETURN, 0x0D},
         {SDL_SCANCODE_ESCAPE, 0x1B},    {SDL_SCANCODE_SPACE, 0x20},     {SDL_SCANCODE_PAGEUP, 0x21},
@@ -279,6 +282,8 @@ int vk_of(const pccontrols::BoundKey& k) {
         {SDL_SCANCODE_MINUS, 0xBD},     {SDL_SCANCODE_PERIOD, 0xBE},    {SDL_SCANCODE_SLASH, 0xBF},
         {SDL_SCANCODE_GRAVE, 0xC0},     {SDL_SCANCODE_LEFTBRACKET, 0xDB}, {SDL_SCANCODE_BACKSLASH, 0xDC},
         {SDL_SCANCODE_RIGHTBRACKET, 0xDD}, {SDL_SCANCODE_APOSTROPHE, 0xDE},
+        {SDL_SCANCODE_KP_MULTIPLY, 0x6A}, {SDL_SCANCODE_KP_PLUS, 0x6B},   {SDL_SCANCODE_KP_MINUS, 0x6D},
+        {SDL_SCANCODE_KP_PERIOD, 0x6E},   {SDL_SCANCODE_KP_DIVIDE, 0x6F}, {SDL_SCANCODE_KP_ENTER, 0x0D},
     };
     for (auto& [s, v] : kMap)
         if (s == sc) return v;
@@ -395,8 +400,16 @@ uint16_t menu_glyph(MenuGlyph which) {
             }
             return action_glyph("Back");
         case MenuGlyph::Sort: return action_glyph("Crouch");
+        case MenuGlyph::PrevPage: return action_glyph("MenuPrevPage");
+        case MenuGlyph::NextPage: return action_glyph("MenuNextPage");
     }
     return 0;
+}
+
+uint16_t live_glyph(uint16_t code) {
+    if (!g_active) return code;
+    const uint16_t g = glyph_for(code);
+    return g != code && g_cmap.count(g) ? g : code;
 }
 
 void prepare(const std::string& game_root, const std::string& user_root) {

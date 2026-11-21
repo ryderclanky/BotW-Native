@@ -354,26 +354,30 @@ bool is_menu_screen(const std::string& s) {
 }
 
 // ---- menu prompts: in the game's menus the confirm prompt is a left click, Back the Esc key, the inventory's
-// category hint and the map's zoom the wheel; everywhere else the code stays (the font shows the bound key)
+// category hint and the map's zoom the wheel; everywhere else the glyph of the key bound now (the font baked at
+// startup only knows the bindings of that moment, so a rebind in the F1 menu would show the old key)
 uint16_t prompt_glyph(uint32_t pane, uint16_t code, const std::string& screen) {
     using pcprompts::MenuGlyph;
+    const uint16_t live = pcprompts::live_glyph(code);
     if (starts(screen, "PauseMenu") && screen != "PauseMenuInfo_00") {
-        if (has_ancestor(pane, {"N_PauseTips", "Pa_AllTips"})) return code;  // the controls help: gameplay keys
+        if (has_ancestor(pane, {"N_PauseTips", "Pa_AllTips"})) return live;  // the controls help: gameplay keys
         if (has_ancestor(pane, {"Pa_Rstick", "N_RGuide"}))
             if (uint16_t g = pcprompts::menu_glyph(MenuGlyph::Wheel)) return g;
     }
-    if (!is_menu_screen(screen)) return code;
+    if (!is_menu_screen(screen)) return live;
     uint16_t g = 0;
     switch (code) {
         case 0xE040: g = pcprompts::menu_glyph(MenuGlyph::Click); break;
         case 0xE041: g = pcprompts::menu_glyph(MenuGlyph::Back); break;
         case 0xE043: g = pcprompts::menu_glyph(MenuGlyph::Sort); break;  // Y (sort): the Crouch key
+        case 0xE044: g = pcprompts::menu_glyph(MenuGlyph::PrevPage); break;  // L / R: the page keys, not Use Rune
+        case 0xE045: g = pcprompts::menu_glyph(MenuGlyph::NextPage); break;  // and Throw (pc_controls)
         case 0xE05F:
             if (starts(screen, "AppHome") || starts(screen, "AppMap")) g = pcprompts::menu_glyph(MenuGlyph::Wheel);
             break;
         default: break;
     }
-    return g ? g : code;
+    return g ? g : live;
 }
 
 // false: the text box is not the one we know any more (freed layouts are reused by other objects: write only

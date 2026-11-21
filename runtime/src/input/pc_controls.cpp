@@ -12,6 +12,7 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <mutex>
@@ -48,6 +49,34 @@ const struct {
     {"MouseLeft", SDL_BUTTON_LEFT}, {"MouseMiddle", SDL_BUTTON_MIDDLE}, {"MouseRight", SDL_BUTTON_RIGHT},
     {"Mouse4", SDL_BUTTON_X1},      {"Mouse5", SDL_BUTTON_X2},
 };
+
+// With Num Lock off the numpad is a second set of navigation keys (Windows: 9 = Page Up, 1 = End, 8 = Up, ...),
+// but SDL keeps reporting the physical key (Keypad 9). A binding of PageUp etc. also takes its numpad key then.
+const std::pair<SDL_Scancode, SDL_Scancode> kNumpadNav[] = {
+    {SDL_SCANCODE_KP_9, SDL_SCANCODE_PAGEUP}, {SDL_SCANCODE_KP_3, SDL_SCANCODE_PAGEDOWN},
+    {SDL_SCANCODE_KP_7, SDL_SCANCODE_HOME},   {SDL_SCANCODE_KP_1, SDL_SCANCODE_END},
+    {SDL_SCANCODE_KP_8, SDL_SCANCODE_UP},     {SDL_SCANCODE_KP_2, SDL_SCANCODE_DOWN},
+    {SDL_SCANCODE_KP_4, SDL_SCANCODE_LEFT},   {SDL_SCANCODE_KP_6, SDL_SCANCODE_RIGHT},
+    {SDL_SCANCODE_KP_0, SDL_SCANCODE_INSERT}, {SDL_SCANCODE_KP_PERIOD, SDL_SCANCODE_DELETE},
+};
+bool num_lock_off() { return !(SDL_GetModState() & SDL_KMOD_NUM); }
+
+// the navigation key a numpad key is right now (Num Lock off), else the key itself
+SDL_Scancode numpad_nav(SDL_Scancode sc) {
+    if (num_lock_off())
+        for (auto [kp, nav] : kNumpadNav)
+            if (kp == sc) return nav;
+    return sc;
+}
+
+// a bound key held: the key, or with Num Lock off the numpad key that is this navigation key
+bool scan_held(const bool* keys, int code) {
+    if (keys[code]) return true;
+    if (num_lock_off())
+        for (auto [kp, nav] : kNumpadNav)
+            if (nav == code && keys[kp]) return true;
+    return false;
+}
 
 bool parse_key(std::string name, Key& k) {
     while (!name.empty() && (name.back() == ' ' || name.back() == '\t' || name.back() == '\r')) name.pop_back();
@@ -148,8 +177,8 @@ const ActionDef kActions[] = {
     {"TiltMode", "Motion Control (Tilt)", Tilt, 0, 0, "T", ""},
     {"TiltLevel", "Motion Control: Level the Slate", Tilt, 0, 0, "MouseMiddle", ""},
     {"Settings", "Settings Menu", Settings, 0, 0, "F1", ""},
-    {"MenuPrevPage", "Inventory: Previous Page", Btn, BTN_L, 0, "PageUp", ""},
-    {"MenuNextPage", "Inventory: Next Page", Btn, BTN_R, 0, "PageDown", ""},
+    {"MenuPrevPage", "Inventory: Previous Page", Btn, BTN_L, 0, "F", ""},  // menus only (not Use Rune)
+    {"MenuNextPage", "Inventory: Next Page", Btn, BTN_R, 0, "R", ""},  // menus only (not Throw)
 };
 constexpr int kCount = (int)(sizeof(kActions) / sizeof(kActions[0]));
 
@@ -232,6 +261,7 @@ bool write_file(const std::filesystem::path& file) {
             g_selector_invert_scroll ? 1 : 0, g_walk_toggle ? 1 : 0, g_sprint_toggle ? 1 : 0, g_tilt_toggle ? 1 : 0, g_tilt.sens, g_tilt.invert_x ? 1 : 0,
             g_tilt.invert_y ? 1 : 0, g_tilt.max_angle, g_tilt.return_speed, g_tilt.turn_step, g_tilt.invert_turn ? 1 : 0,
             g_tilt.smoothing_ms, g_tilt.max_speed);
+    fprintf(f, "# the inventory's page keys (L / R) are their own; Use Rune and Throw are gameplay only\nmenu_page_keys=1\n");
     for (int i = 0; i < kCount; i++) {
         std::string a = key_name(g_keys[i][0]), b = key_name(g_keys[i][1]);
         std::string v = a.empty() ? b : b.empty() ? a : a + ", " + b;
@@ -257,7 +287,7 @@ void ensure() {
     g_on = true;
     char line[512];
     int n = 0;
-    bool saw_system = false;
+    bool saw_system = false, saw_page_keys = false;
     while (fgets(line, sizeof line, f)) {
         n++;
         char* p = line;
@@ -277,6 +307,7 @@ void ensure() {
         else if (k == "selector_invert_scroll") g_selector_invert_scroll = atoi(v.c_str()) != 0;
         else if (k == "sprint_toggle") g_sprint_toggle = atoi(v.c_str()) != 0;
         else if (k == "walk_toggle") g_walk_toggle = atoi(v.c_str()) != 0;
+        else if (k == "menu_page_keys") saw_page_keys = true;
         else if (k == "tilt_toggle") g_tilt_toggle = atoi(v.c_str()) != 0;
         else if (k == "tilt_sens") g_tilt.sens = std::clamp((float)atof(v.c_str()), 0.01f, 50.0f);
         else if (k == "tilt_invert_x") g_tilt.invert_x = atoi(v.c_str()) != 0;
@@ -310,6 +341,23 @@ void ensure() {
             for (Key& k : g_keys[back])
                 if (k.type == esc.type && k.code == esc.code) k = {};
     }
+    if (!saw_page_keys) {
+        // file from before the page keys were split off: the inventory got L / R from Use Rune and Throw. Their
+        // first keys join the page keys (in an empty slot), so those keys keep working in the inventory.
+        const std::pair<const char*, const char*> kPairs[] = {{"UseRune", "MenuPrevPage"}, {"Throw", "MenuNextPage"}};
+        for (auto [from, to] : kPairs) {
+            const int a = find_action(from), b = find_action(to);
+            if (a < 0 || b < 0 || g_keys[a][0].type == Key::None) continue;
+            const Key src = g_keys[a][0];
+            bool have = false;
+            for (const Key& k : g_keys[b]) have |= k.type == src.type && k.code == src.code;
+            if (have) continue;
+            if (g_keys[b][0].type == Key::None) g_keys[b][0] = src;
+            else if (g_keys[b][1].type == Key::None) g_keys[b][1] = src;
+            else continue;
+            LOG("pc controls: %s gets %s's key %s (inventory pages)", to, from, key_name(src).c_str());
+        }
+    }
     LOG("pc controls: %s %s", g_path.c_str(), g_on ? "(on)" : "(enabled=0, off)");
 }
 
@@ -327,23 +375,27 @@ bool active() {
 
 // In the game's menus (a menu has the pointer) the Crouch key is the GamePad's Y: Sort in the inventory (its prompt
 // shows the Crouch key there, see pc_ui.cpp). In play it stays the left stick click.
+// L / R are split: in the menus only the page keys (MenuPrevPage / MenuNextPage, F / R by default) send them, in
+// play only Use Rune and Throw do, so each pair can be bound on its own.
 uint32_t action_bits(int i, bool pointer) {
-    static const int kCrouch = [] {
-        for (int k = 0; k < kCount; k++)
-            if (!strcmp(kActions[k].id, "Crouch")) return k;
-        return -1;
-    }();
-    return pointer && i == kCrouch ? BTN_Y : kActions[i].bits;
+    static const int kCrouch = find_action("Crouch"), kUseRune = find_action("UseRune"),
+                     kThrow = find_action("Throw"), kPrevPage = find_action("MenuPrevPage"),
+                     kNextPage = find_action("MenuNextPage");
+    if (pointer && i == kCrouch) return BTN_Y;
+    if (pointer && (i == kUseRune || i == kThrow)) return 0;
+    if (!pointer && (i == kPrevPage || i == kNextPage)) return 0;
+    return kActions[i].bits;
 }
 
 void key_down(SDL_Scancode sc) {
     if (!active()) return;
     const bool pointer = mouse::pointer_mode();
+    const int nav = (int)numpad_nav(sc);  // Keypad 9 with Num Lock off is also Page Up
     uint32_t bits = 0;
     for (int i = 0; i < kCount; i++)
         if (kActions[i].kind == Btn)
             for (auto& k : g_keys[i])
-                if (k.type == Key::Scan && k.code == (int)sc) bits |= action_bits(i, pointer);
+                if (k.type == Key::Scan && (k.code == (int)sc || k.code == nav)) bits |= action_bits(i, pointer);
     pulse(bits);
 }
 
@@ -409,7 +461,7 @@ void apply(SDL_Window* win, PadState& s) {
             switch (k.type) {
                 case Key::Scan:
                     // Alt+Tab switches windows; it is not the inventory
-                    if (focused && keys[k.code] && !(alt && k.code == SDL_SCANCODE_TAB)) down = true;
+                    if (focused && scan_held(keys, k.code) && !(alt && k.code == SDL_SCANCODE_TAB)) down = true;
                     break;
                 case Key::Mouse:
                     if (!in_play) break;

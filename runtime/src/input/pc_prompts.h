@@ -18,7 +18,12 @@ namespace pcprompts {
 void prepare(const std::string& game_root, const std::string& user_root);
 bool active();
 // Glyphs for the prompts of the game's menus (pc_ui.cpp re-targets them there): left click, mouse wheel, the Back
-// key, Sort (the Crouch key, which is Y in menus). 0 when the prompts are off or the font has no such glyph.
-enum class MenuGlyph { Click, Wheel, Back, Sort };
+// key, Sort (the Crouch key, which is Y in menus), the inventory's page keys (L / R in menus).
+// 0 when the prompts are off or the font has no such glyph.
+enum class MenuGlyph { Click, Wheel, Back, Sort, PrevPage, NextPage };
 uint16_t menu_glyph(MenuGlyph which);
+// The glyph for one of the game's button codes (U+E040..) under the bindings as they are now. The font baked at
+// startup maps the codes to the bindings of that moment; writing this glyph into the text follows later rebinds.
+// The code itself when the prompts are off or the font has no glyph for the key.
+uint16_t live_glyph(uint16_t code);
 }  // namespace pcprompts
