@@ -16,6 +16,7 @@
 #include "../log.h"
 #include "../thread.h"
 #include "input.h"
+#include "pc_controls.h"
 #include "title_diag.h"
 
 namespace {
@@ -182,6 +183,7 @@ HLE_EXPORT(vpad, VPADRead) {
         return;
     }
     input::PadState s = input::gamepad();
+    pccontrols::frame(s, !this_is_sampling_thread());  // PC selectors (weapon / bow / shield / rune)
     mem::commit(buf, 0xAC, true);
     memset(mem::host(buf), 0, 0xAC);
     uint32_t hold = s.buttons;
@@ -206,7 +208,7 @@ HLE_EXPORT(vpad, VPADRead) {
     wf(buf + 0x18, s.ry);
     wf(buf + 0x30, 1.0f);  // accXY
     input::Motion m;
-    if (input::motion(&m)) {  // controller gyro / accelerometer
+    if (pccontrols::tilt_motion(&m) || input::motion(&m)) {  // PC Motion Control, or controller gyro
         for (int k = 0; k < 3; k++) {
             wf(buf + 0x1C + 4 * k, m.acc[k]);
             wf(buf + 0x38 + 4 * k, m.gyro_change[k]);

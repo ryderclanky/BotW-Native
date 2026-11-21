@@ -314,6 +314,13 @@ add_custom_command(TARGET BotWRecomp POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
           "${_botw_controller_db}" "$<TARGET_FILE_DIR:BotWRecomp>/gamecontrollerdb.txt"
   VERBATIM)
+# Keyboard & mouse prompt font (Zelda-on-PC, MPL-2.0), read by runtime/src/input/pc_prompts.cpp.
+set(_botw_prompt_font "${CMAKE_SOURCE_DIR}/runtime/resources/pcedition/External_00.bffnt")
+add_custom_command(TARGET BotWRecomp POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BotWRecomp>/resources/pcedition"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${_botw_prompt_font}" "$<TARGET_FILE_DIR:BotWRecomp>/resources/pcedition/External_00.bffnt"
+  VERBATIM)
 if(WIN32 AND MINGW)
   botw_deploy_windows_runtime(BotWRecomp)
 endif()
@@ -491,6 +498,7 @@ else()
   install(TARGETS ${_botw_ship} RUNTIME DESTINATION . BUNDLE DESTINATION .)
 endif()
 install(FILES "${CMAKE_SOURCE_DIR}/runtime/gamecontrollerdb.txt" DESTINATION .)
+install(FILES "${CMAKE_SOURCE_DIR}/runtime/resources/pcedition/External_00.bffnt" DESTINATION resources/pcedition)
 add_custom_target(botw_package
   COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}" --prefix "${BOTW_PACKAGE_DIR}" --strip
   DEPENDS ${_botw_ship}

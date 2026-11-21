@@ -32,4 +32,8 @@ struct Motion {
 void motion_sensor(bool gyro, const float data[3], uint64_t timestamp_ns);  // SDL units: rad/s, m/s^2
 void motion_reset();
 bool motion(Motion* out);  // false until a controller with motion sensors reports
+// Virtual GamePad (PC Motion Control): pose = (w, x, y, z) in the fusion's frame (lying flat, screen up =
+// (sqrt(1/2), sqrt(1/2), 0, 0)); advances its own fusion by dt seconds and returns the VPAD values.
+void virtual_motion(const float pose[4], float dt, Motion* out);
+void virtual_motion_reset();
 }  // namespace input

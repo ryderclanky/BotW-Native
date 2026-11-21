@@ -27,6 +27,13 @@ struct Settings {
     int touch = 0;         // on-screen controls: 0 auto (while no controller), 1 on, 2 off
 #endif
     bool touch_hidden = false;  // collapsed to the show/hide button (that button toggles it)
+    // mouse camera (PC controls): base 0.022 degrees per count, times mouse_sens
+    bool mouse_camera = true;
+    float mouse_sens = 2.0f;
+    float mouse_sens_y = 1.0f;  // vertical, relative to horizontal
+    float mouse_sens_aim = 0.8f;  // multiplier in the zoomed cameras (bow drawn, scope, camera rune)
+    bool mouse_invert_x = false;
+    bool mouse_invert_y = false;
     std::string gpu;       // Vulkan device UUID (hex) of the chosen GPU; empty = automatic (best GPU)
     std::string gpu_name;  // its name, used when the UUID is not found
 };

@@ -129,8 +129,8 @@ one in the launcher. The default uses an available language for the detected reg
 
 ## Controls
 
-On this build, **E = A**, **Left Shift = B**, and **Enter = Plus**. The runtime log lists the
-keyboard and gamepad controls.
+Controllers work as on the Wii U. Keyboard and mouse use a PC layout ported from
+[Zelda-on-PC](https://github.com/mircea32000/Zelda-on-PC) (see [Keyboard and mouse](#keyboard-and-mouse)).
 
 F1 opens the settings menu. F11 toggles fullscreen.
 
@@ -140,6 +140,36 @@ in the settings menu, so a pad without those buttons can use L3+R3 and pick it t
 off by default, and `--gamepad-view` or `--no-gamepad-view` overrides the saved choice for one run.
 While it is on, the window shows the TV (1280×720) and the GamePad (854×480) at the same scale,
 centered, and `--display` does not apply. Vulkan renderer only.
+
+### Keyboard and mouse
+
+The mouse turns the camera 1:1 (every player camera: aiming, climbing, horse, Magnesis, ...), and
+the in-game button prompts show your PC keys. Default keys:
+
+| Action | Key | Action | Key |
+| --- | --- | --- | --- |
+| Move | W A S D | Attack | Left click |
+| Walk | Left Ctrl | Draw bow | Right click |
+| Sprint | Left Shift | Lock on / shield | Q, Mouse 4 |
+| Jump (again while gliding: close the paraglider) | Space | Use rune | F |
+| Crouch | C | Throw weapon | R |
+| Action / interact | E | Scope | Middle click, Z |
+| Whistle | X | Next / previous weapon or arrow | Mouse wheel |
+| Weapon / bow / shield / rune selector (hold, pick with mouse or wheel) | 1 / 2 / 3 / 4 | Motion Control (mouse tilts the GamePad) | T |
+| Inventory | Tab, I | Map | M |
+| Adventure log | J | System menu / back | Escape |
+| Save / Load (the game still asks) | F5 / F9 | Menu back | Backspace |
+
+- **Context actions** follow the game's prompts: left click throws a bomb or drops held
+  materials, right click puts them away, cancels a rune or detonates a remote bomb, the wheel
+  pushes and pulls with Magnesis and zooms the scope, E lets go while climbing, Shift dashes
+  while swimming, Q + left click parries.
+- **Menus** take the mouse: hover selects, click confirms, right click goes back, click the
+  inventory tabs and option arrows, drag Link to turn him, drag and zoom the map.
+- **Settings**: the F1 menu's Controls tab has mouse camera on/off, sensitivity, vertical and
+  aiming speed, invert X/Y, and Hold or Toggle for Motion Control, Walk, and Sprint. Its Keys
+  tab rebinds every action (two keys each). Everything is saved in
+  `%APPDATA%\BotWRecomp\pc_controls.ini` (`enabled=0` there turns the PC layout off).
 
 ## Environment variables
 
@@ -188,6 +218,12 @@ Wild for iPhone and Mac. The recompiler, the Cafe OS runtime, and the original M
 come from that project. This repository adds the Windows build and the Vulkan backend on top
 of it. Thank you to Ishaan Kalra and to everyone whose work it builds on:
 
+- [Zelda-on-PC](https://github.com/mircea32000/Zelda-on-PC) by
+  [mircea32000](https://github.com/mircea32000) (MPL-2.0): the keyboard and mouse support (mouse
+  camera, PC key prompts and their font `runtime/resources/pcedition/External_00.bffnt`, mouse
+  menus, context controls, Motion Control on the mouse). Ported into `runtime/src/input/pc_*` and
+  `runtime/src/game/pc_*`; the files derived from it say so at the top. The keyboard and mouse
+  port was done by [CodeCraftPlugin](https://github.com/CodeCraftPlugin).
 - [Cemu](https://github.com/cemu-project/Cemu): the GPU layer in `runtime/cemu/`, and parts of
   GX2, snd_core, and the motion code in `runtime/src/` (each such file says so at the top).
   Vendored from commit `a53cf0ece75964aa361056edab46f281dcc0bc44`.
@@ -200,7 +236,8 @@ of it. Thank you to Ishaan Kalra and to everyone whose work it builds on:
   [metal-cpp](https://developer.apple.com/metal/cpp/).
 
 This project's own code is MIT licensed ([LICENSE](LICENSE)). Code from Cemu stays under the
-Mozilla Public License 2.0 ([runtime/cemu/LICENSE.txt](runtime/cemu/LICENSE.txt)). Dear ImGui
+Mozilla Public License 2.0 ([runtime/cemu/LICENSE.txt](runtime/cemu/LICENSE.txt)), and so do the
+files and the font derived from Zelda-on-PC ([MPL 2.0](https://mozilla.org/MPL/2.0/)). Dear ImGui
 and metal-cpp keep their own licenses, in `runtime/cemu/dependencies/`.
 
 The Legend of Zelda and Breath of the Wild are trademarks of Nintendo. This is an unofficial

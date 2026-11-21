@@ -4,6 +4,9 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cfloat>
+#include <string>
+#include <vector>
 #include <pthread.h>
 
 #include <atomic>
@@ -13,6 +16,7 @@
 #include "../src/host/touch.h"
 #include "../src/host/touch_draw.h"
 #include "../src/bench/bench.h"
+#include "../src/game/pc_ui.h"
 #include "../src/settings.h"
 #include "Cafe/HW/Latte/Core/LatteOverlay.h"
 #include "title_diag.h"
@@ -25,6 +29,44 @@ std::string main_wait_report();
 namespace {
 std::atomic<float> g_fps{0};
 std::atomic<int> g_draws{0};
+
+// PC keys on the HUD action ring (game/pc_ui.cpp hides the GamePad button pictures): a white disc (a pill for
+// longer names) with the key name, where the picture was, fading with its label.
+void draw_hud_keys(const ImGuiIO& io, int display) {
+    const std::vector<pceui::HudKey> keys = pceui::hud_keys();
+    if (keys.empty()) return;
+    // the 16:9 TV picture inside the window, as the display setting places it
+    const float w = io.DisplaySize.x, h = io.DisplaySize.y, aspect = 16.0f / 9.0f;
+    if (w <= 0 || h <= 0) return;
+    float iw = w, ih = h;
+    const bool wide = w / h > aspect;
+    if (display == 0) {  // fit (letterbox)
+        if (wide) iw = h * aspect;
+        else ih = w / aspect;
+    } else if (display == 2) {  // fill (crop)
+        if (wide) ih = w / aspect;
+        else iw = h * aspect;
+    }
+    const float ox = (w - iw) * 0.5f, oy = (h - ih) * 0.5f;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    ImFont* font = ImGui::GetFont();
+    for (const pceui::HudKey& k : keys) {
+        const float x0 = ox + k.rect.x0 * iw, x1 = ox + k.rect.x1 * iw;
+        const float y0 = oy + k.rect.y0 * ih, y1 = oy + k.rect.y1 * ih;
+        const float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
+        const float r = std::min(x1 - x0, y1 - y0) * 0.5f;
+        if (r < 2) continue;
+        const char* text = k.label.c_str();
+        float fs = r * (k.label.size() == 1 ? 1.25f : 0.95f);
+        ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, text);
+        const float max_w = r * 5.0f;  // long names shrink a little, then the pill grows
+        if (ts.x > max_w) fs *= max_w / ts.x, ts = font->CalcTextSizeA(fs, FLT_MAX, 0, text);
+        const float half = std::max(r, ts.x * 0.5f + r * 0.45f);
+        const int a = (int)(std::clamp(k.alpha, 0.0f, 1.0f) * 255);
+        dl->AddRectFilled({cx - half, cy - r}, {cx + half, cy + r}, IM_COL32(245, 245, 240, a * 235 / 255), r);
+        dl->AddText(font, fs, {cx - ts.x * 0.5f, cy - ts.y * 0.5f}, IM_COL32(20, 20, 20, a), text);
+    }
+}
 }  // namespace
 
 // Cemu's GPU thread (LatteThread), for the host loop's slow-frame sampler (window.mm).
@@ -53,6 +95,7 @@ void LatteOverlay_render(bool padView) {
     menu::pointer_state(&px, &py, &down);
     io.AddMousePosEvent(px, py);
     io.AddMouseButtonEvent(0, down);
+    if (const float w = menu::take_wheel()) io.AddMouseWheelEvent(0, w);
 
     swkbd::View keyboard = swkbd::keyboard().view();
     if (keyboard.active) {
@@ -109,13 +152,16 @@ void LatteOverlay_render(bool padView) {
     }
 
     menu::View v = menu::view();
+    if (!v.open) draw_hud_keys(io, settings::get().display);
     if (!v.open) touch::draw();
     if (!v.open) return;
     ImGui::SetNextWindowPos({io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f}, ImGuiCond_Always, {0.5f, 0.5f});
     ImGui::SetNextWindowBgAlpha(0.88f);
     if (ImGui::Begin("##menu", nullptr, overlay)) {
         ImGui::SetWindowFontScale(ui * 1.25f);
-        const float label_w = 150 * ui, value_w = 230 * ui;
+        // Keys tab: long action names, short key names -> wider name column (same panel width)
+        const bool keys_tab = v.tab < (int)v.tabs.size() && v.tabs[v.tab] == "Keys";
+        const float label_w = (keys_tab ? 235 : 150) * ui, value_w = (keys_tab ? 145 : 230) * ui;
         const float xs = ImGui::GetFrameHeight();  // X in the top-right corner, same height as a row
         const float panel_w = label_w + value_w + 24 * ui + xs;  // fixed width: the panel does not jump between tabs
         const ImVec4 gold = ImGui::ColorConvertU32ToFloat4(IM_COL32(255, 215, 90, 255));
@@ -146,6 +192,10 @@ void LatteOverlay_render(bool padView) {
         // Body: the rows of the tab, or the read-only text of About. Padded to a fixed height.
         const float body_top = ImGui::GetCursorPosY();
         const float body_h = 9 * ImGui::GetFrameHeightWithSpacing();
+        // more rows than fit (Keys, Mods): they scroll, keeping the selected row in view
+        const bool scroll = (int)v.rows.size() > 9;
+        static int s_last_cursor = -1, s_last_tab = -1;
+        if (scroll) ImGui::BeginChild("##rows", {panel_w, body_h}, false);
         for (int i = 0; i < (int)v.rows.size(); i++) {
             const menu::Row& r = v.rows[i];
             ImGui::PushID(i);
@@ -162,9 +212,12 @@ void LatteOverlay_render(bool padView) {
                     if (ImGui::ArrowButton("##r", ImGuiDir_Right)) menu::click(i, +1);
                 }
             }
+            if (sel && scroll && (v.cursor != s_last_cursor || v.tab != s_last_tab)) ImGui::SetScrollHereY(0.5f);
             if (sel) ImGui::PopStyleColor();
             ImGui::PopID();
         }
+        if (scroll) ImGui::EndChild();
+        s_last_cursor = v.cursor, s_last_tab = v.tab;
         if (!v.text.empty()) {
             ImGui::Spacing();
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + panel_w);

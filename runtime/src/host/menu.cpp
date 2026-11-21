@@ -7,6 +7,7 @@
 #include <mutex>
 
 #include "../coreinit/mods.h"
+#include "../input/pc_controls.h"
 #include "../settings.h"
 
 extern float g_render_scale;  // main.cpp: the scale this run renders at
@@ -32,7 +33,17 @@ enum RowId {
     kWindowMode,
     kMods,
     kVolume,
+    kMouseCam,
+    kMouseSens,
+    kMouseSensY,
+    kMouseSensAim,
+    kMouseInvX,
+    kMouseInvY,
+    kTiltHold,
+    kWalkHold,
+    kSprintHold,
     kModReload,
+    kKeyReset,
     kClose,
     kRows
 };
@@ -40,12 +51,15 @@ const float kScales[] = {0, 0.5f, 0.75f, 1, 1.5f, 2, 2.5f, 3};  // 0 = fit the d
 
 // Tabs. Every setting of the previous flat list is in exactly one tab; the order inside a tab follows
 // the order of the old list. Close is appended to every tab.
-enum TabId { kTabGraphics, kTabControls, kTabAudio, kTabMods, kTabAbout, kTabs };
-const char* kTabNames[kTabs] = {"Graphics", "Controls", "Audio", "Mods", "About"};
+enum TabId { kTabGraphics, kTabControls, kTabKeys, kTabAudio, kTabMods, kTabAbout, kTabs };
+const char* kTabNames[kTabs] = {"Graphics", "Controls", "Keys", "Audio", "Mods", "About"};
 constexpr int kModRowBase = 1000;
+constexpr int kKeyRowBase = 2000;  // Keys tab: one row per PC action (pc_controls.ini)
+int g_key_slot = 0;                // first (0) or second (1) key of the selected action
+std::atomic<int> g_listen{-1};     // action waiting for a key press, -1 none
 const std::vector<int>& tab_rows(int t) {
     static const std::vector<int> graphics = {kFps, kWindowMode, kScale, kDisplay, kFilter, kGamepadView, kShowFps, kMods};
-    static const std::vector<int> controls = {kGyro, kRumble, kLayout, kTouch};
+    static const std::vector<int> controls = {kGyro, kRumble, kLayout, kTouch, kMouseCam, kMouseSens, kMouseSensY, kMouseSensAim, kMouseInvX, kMouseInvY, kTiltHold, kWalkHold, kSprintHold};
     static const std::vector<int> audio = {kVolume};
     static const std::vector<int> about;
     switch (t) {
@@ -65,6 +79,11 @@ int row_id(int t, int cursor) {
         if (cursor == n) return (int)kModReload;
         return (int)kClose;
     }
+    if (t == kTabKeys) {
+        const int n = pccontrols::action_count();
+        if (cursor >= 0 && cursor < n) return kKeyRowBase + cursor;
+        return cursor == n ? (int)kKeyReset : (int)kClose;
+    }
     const std::vector<int>& r = tab_rows(t);
     return cursor >= 0 && cursor < (int)r.size() ? r[cursor] : (int)kClose;
 }
@@ -73,6 +92,7 @@ int row_count(int t) {
         auto list = mods::status();
         return list.empty() ? 2 : ((int)list.size() + 2);
     }
+    if (t == kTabKeys) return pccontrols::action_count() + 2;
     return (int)tab_rows(t).size() + 1;
 }
 
@@ -114,6 +134,16 @@ void step(Settings& s, int row, int dir) {
         case kShowFps: s.show_fps = !s.show_fps; break;
         case kWindowMode: s.window_mode = wrap(s.window_mode + dir, 3); break;
         case kVolume: s.volume = std::clamp(s.volume + dir * 10, 0, 100); break;
+        // mouse camera (PC controls): sensitivity in steps of 0.1, rounded so repeated steps stay clean
+        case kMouseCam: s.mouse_camera = !s.mouse_camera; break;
+        case kMouseSens: s.mouse_sens = std::clamp(roundf(s.mouse_sens * 10 + dir) / 10, 0.1f, 10.0f); break;
+        case kMouseSensY: s.mouse_sens_y = std::clamp(roundf(s.mouse_sens_y * 10 + dir) / 10, 0.1f, 3.0f); break;
+        case kMouseSensAim: s.mouse_sens_aim = std::clamp(roundf(s.mouse_sens_aim * 10 + dir) / 10, 0.1f, 3.0f); break;
+        case kMouseInvX: s.mouse_invert_x = !s.mouse_invert_x; break;
+        case kMouseInvY: s.mouse_invert_y = !s.mouse_invert_y; break;
+        case kTiltHold: pccontrols::set_hold_toggle(0, !pccontrols::hold_toggle(0)); break;
+        case kWalkHold: pccontrols::set_hold_toggle(1, !pccontrols::hold_toggle(1)); break;
+        case kSprintHold: pccontrols::set_hold_toggle(2, !pccontrols::hold_toggle(2)); break;
     }
 }
 
@@ -163,6 +193,10 @@ void pointer_state(float* x, float* y, bool* down) {
     *down = g_pdown;
 }
 
+std::atomic<float> g_wheel{0};
+void wheel(float y) { g_wheel = g_wheel.load() + y; }
+float take_wheel() { return g_wheel.exchange(0); }
+
 std::atomic<float> g_safe[4] = {0, 0, 0, 0};
 void set_safe_area(float l, float t, float r, float b) {
     g_safe[0] = l, g_safe[1] = t, g_safe[2] = r, g_safe[3] = b;
@@ -188,8 +222,27 @@ bool touch_close(float x, float y) {
 }
 
 bool is_open() { return g_open; }
-void toggle() { g_open = !g_open; }
-void close() { g_open = false; }
+void toggle() {
+    g_open = !g_open;
+    g_listen = -1;
+}
+void close() {
+    g_open = false;
+    g_listen = -1;
+}
+
+bool listening() { return g_open && g_listen.load() >= 0; }
+void cancel_listen() { g_listen = -1; }
+void bind(int type, int code) {
+    const int a = g_listen.exchange(-1);
+    if (a < 0) return;
+    int slot;
+    {
+        std::lock_guard<std::mutex> l(g_lock);
+        slot = g_key_slot;
+    }
+    pccontrols::set_binding(a, slot, type, code);
+}
 
 void move(int dy) {
     std::lock_guard<std::mutex> l(g_lock);
@@ -219,7 +272,12 @@ void change(int dir) {
         std::lock_guard<std::mutex> l(g_lock);
         row = row_id(g_tab, g_cursor);
     }
-    if (row == kClose || row == kMods || row == kModReload) return;
+    if (row == kClose || row == kMods || row == kModReload || row == kKeyReset) return;
+    if (row >= kKeyRowBase) {  // left / right: first or second key
+        std::lock_guard<std::mutex> l(g_lock);
+        g_key_slot ^= 1;
+        return;
+    }
     if (row >= kModRowBase) {
         auto list = mods::status();
         int idx = row - kModRowBase;
@@ -244,6 +302,8 @@ void activate() {
         row = row_id(g_tab, g_cursor);
     }
     if (row == kClose) close();
+    else if (row == kKeyReset) pccontrols::reset_bindings();
+    else if (row >= kKeyRowBase) g_listen = row - kKeyRowBase;
     else if (row == kMods) select_tab(kTabMods);
     else if (row == kModReload) mods::reload();
     else if (row >= kModRowBase) {
@@ -333,6 +393,18 @@ View view() {
     all[kMods] = {"Mods", mods::summary(), false, true};
     snprintf(b, sizeof b, "%d%%", s.volume);
     all[kVolume] = {"Volume", b};
+    all[kMouseCam] = {"Mouse camera", s.mouse_camera ? "On" : "Off"};
+    snprintf(b, sizeof b, "%.1f", s.mouse_sens);
+    all[kMouseSens] = {"Mouse sensitivity", b};
+    snprintf(b, sizeof b, "%.1fx", s.mouse_sens_y);
+    all[kMouseSensY] = {"Mouse vertical speed", b};
+    snprintf(b, sizeof b, "%.1fx", s.mouse_sens_aim);
+    all[kMouseSensAim] = {"Mouse aiming speed", b};
+    all[kMouseInvX] = {"Invert mouse X", s.mouse_invert_x ? "On" : "Off"};
+    all[kMouseInvY] = {"Invert mouse Y", s.mouse_invert_y ? "On" : "Off"};
+    all[kTiltHold] = {"Motion Control key (T)", pccontrols::hold_toggle(0) ? "Toggle" : "Hold"};
+    all[kWalkHold] = {"Walk key", pccontrols::hold_toggle(1) ? "Toggle" : "Hold"};
+    all[kSprintHold] = {"Sprint key", pccontrols::hold_toggle(2) ? "Toggle" : "Hold"};
     all[kModReload] = {"Apply / Reload Overlay (R)", "", true};
     all[kClose] = {"Close", "", true};
     if (tab_now == kTabMods) {
@@ -390,6 +462,26 @@ View view() {
             v.rows.push_back(all[kModReload]);
         }
         v.rows.push_back(all[kClose]);
+    } else if (tab_now == kTabKeys) {
+        int slot;
+        {
+            std::lock_guard<std::mutex> l(g_lock);
+            slot = g_key_slot;
+        }
+        const int listen = g_listen.load();
+        for (int i = 0; i < pccontrols::action_count(); i++) {
+            std::string k[2];
+            for (int j = 0; j < 2; j++) {
+                k[j] = pccontrols::binding_text(i, j);
+                if (k[j].empty()) k[j] = "-";
+                if (i == cursor && j == slot) k[j] = "[" + k[j] + "]";
+            }
+            std::string val = k[0] + "   " + k[1];
+            if (i == listen) val = std::string("Press a key for the ") + (slot ? "second" : "first") + " key...";
+            v.rows.push_back({pccontrols::action_name(i), val});
+        }
+        v.rows.push_back({"Reset all keys to the defaults", "", true});
+        v.rows.push_back(all[kClose]);
     } else {
         for (int id : tab_rows(tab_now)) v.rows.push_back(all[id]);
         v.rows.push_back(all[kClose]);
@@ -399,6 +491,13 @@ View view() {
         v.note = b;
     } else if (tab_now == kTabControls) {
         v.note = "Controls changes apply at once and are saved to settings.ini.";
+    } else if (tab_now == kTabKeys) {
+        v.note = g_listen.load() >= 0
+                     ? "Press a key, mouse button or turn the wheel. Esc: cancel  Delete: no key"
+                     : pccontrols::active()
+                           ? "Enter: change the [marked] key | Left/Right: first / second key. Saved to pc_controls.ini at "
+                             "once; the keys shown in the game's prompts update after a restart."
+                           : "PC controls are off (enabled=0 in pc_controls.ini).";
     } else if (tab_now == kTabMods) {
         v.note = mods::pending_restart()
                      ? "Enter/A: Toggle ON/OFF | Left/Right: Preset | U/D (X/Y): Order | R: Reload (boot packs need restart)"

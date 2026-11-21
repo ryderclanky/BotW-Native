@@ -19,6 +19,8 @@
 
 #include "../input/controls_config.h"
 #include "../input/input.h"
+#include "../input/mouse.h"
+#include "../input/pc_controls.h"
 #include "../log.h"
 #include "../os.h"
 #include "../latte/latte.h"
@@ -123,6 +125,7 @@ void note_key_down(SDL_Scancode sc) {
     // Level state (SDL_GetKeyboardState) misses a tap that is already up by the
     // next poll. OS key-repeat events are not new presses; the level bit covers a hold.
     if (menu::is_open()) return;
+    if (pccontrols::active()) return pccontrols::key_down(sc);
     // controls.ini replaces the built-in scancode table, including this tap latch.
     uint32_t b = controls::loaded() ? controls::button_for_scancode(sc) : button_for_scancode(sc);
     if (b) g_key_pulses.push_back({b, SDL_GetTicks() + 50});
@@ -380,7 +383,8 @@ void apply_input() {
     // controls.ini replaces keyboard and overrides controller buttons. With no file, the
     // blocks below are the auto-layout map, including the tap latch applied just after.
     const bool file_controls = controls::loaded();
-    if (file_controls) controls::apply_keyboard(g_win, s);
+    if (pccontrols::active()) pccontrols::apply(g_win, s);
+    else if (file_controls) controls::apply_keyboard(g_win, s);
     else if (g_win && (SDL_GetWindowFlags(g_win) & SDL_WINDOW_INPUT_FOCUS)) {
         for (auto& k : kKeys)
             if (keys[k.sc]) s.buttons |= k.button;
@@ -440,6 +444,7 @@ void apply_input() {
     touch::apply(s);  // on-screen controls (s is cleared below while the menu is open)
     if (menu::is_open()) {  // the menu owns the controls; the game sees nothing pressed
         g_key_pulses.clear();
+        pccontrols::clear_pulses();
         s = input::PadState{};
         if (SDL_Gamepad* pad = active_pad()) {  // left stick navigates the menu
             static int last_y = 0, last_x = 0;
@@ -453,6 +458,7 @@ void apply_input() {
     }
     if (swkbd::keyboard().view().active) {
         g_key_pulses.clear();
+        pccontrols::clear_pulses();
         s = input::PadState{};
     }
     // scripted input
@@ -498,6 +504,7 @@ void apply_input() {
         }
     }
     s.buttons |= bench::buttons();
+    if (!menu::is_open() && !swkbd::keyboard().view().active) input::mouse::manual_stick(s.rx, s.ry);
     s.lx = std::clamp(s.lx, -1.f, 1.f);
     s.ly = std::clamp(s.ly, -1.f, 1.f);
     s.rx = std::clamp(s.rx, -1.f, 1.f);
@@ -506,10 +513,15 @@ void apply_input() {
 }
 
 void log_controls() {
-    if (controls::log_if_loaded()) return;
-    LOG("controls: keyboard  E=A  Shift=B  Space=X  F=Y  Q=ZL  R=ZR  1=L  3=R  Enter=Plus  Tab=Minus");
-    LOG("controls: keyboard  arrows=D-pad  C=left stick click  V=right stick click  H or Home=Home  G=Sync  T=TV");
-    LOG("controls: keyboard  WASD=left stick  J/L=right stick left/right  I/K=right stick up/down  (+Y is up)");
+    if (pccontrols::active()) {  // keyboard and mouse from pc_controls.ini; controllers below as usual
+        pccontrols::log_bindings();
+        LOG("controls: F1 menu  F11 fullscreen  F2 GamePad view (built-in, not in pc_controls.ini)");
+    } else {
+        if (controls::log_if_loaded()) return;
+        LOG("controls: keyboard  E=A  Shift=B  Space=X  F=Y  Q=ZL  R=ZR  1=L  3=R  Enter=Plus  Tab=Minus");
+        LOG("controls: keyboard  arrows=D-pad  C=left stick click  V=right stick click  H or Home=Home  G=Sync  T=TV");
+        LOG("controls: keyboard  WASD=left stick  J/L=right stick left/right  I/K=right stick up/down  (+Y is up)");
+    }
     const char* layout = g_layout < 0 ? "auto (BotW positions on PlayStation/Switch; Xbox labels on Xbox)"
                          : g_layout > 0 ? "A = bottom, Cross / Xbox A"
                                         : "A = right, Circle / Xbox B";
@@ -756,6 +768,13 @@ void run() {
                     else if (e.key.key == SDLK_RIGHT) swkbd::keyboard().move(1, 0);
                     continue;
                 }
+                // Keys tab of the menu waiting for a key: this press is the new binding
+                if (menu::listening()) {
+                    if (e.key.key == SDLK_ESCAPE) menu::cancel_listen();
+                    else if (e.key.key == SDLK_DELETE) menu::bind(0, 0);
+                    else menu::bind(1, (int)e.key.scancode);
+                    continue;
+                }
                 // Record the press before the menu toggle. A tap of E can be down and
                 // up inside one poll; the pulse keeps it visible to the next VPADRead.
                 note_key_down(e.key.scancode);
@@ -764,6 +783,8 @@ void run() {
                 else if ((e.key.key == SDLK_F11 ||
                           (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))) && g_win) {
                     toggle_window_mode();
+                } else if (!menu::is_open() && pccontrols::is_settings_key(e.key.scancode)) {
+                    menu::toggle();  // pc_controls.ini Settings (Escape); Escape in the menu closes it below
                 } else if (menu::is_open()) {
                     switch (e.key.key) {
                         case SDLK_ESCAPE: menu::close(); break;
@@ -786,12 +807,38 @@ void run() {
                 touch::event(e);
             } else if (e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
                        e.type == SDL_EVENT_MOUSE_BUTTON_UP) {  // touch arrives as mouse events too
+                input::mouse::event(e);
+                if (input::mouse::captured()) continue;  // relative mode: no pointer position for the menu
+                // Keys tab waiting for a key: a mouse button is the new binding; the menu does not see that click
+                // (until the button is up again)
+                static uint32_t swallow = 0;
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && menu::listening() && e.button.which != SDL_TOUCH_MOUSEID) {
+                    menu::bind(2, e.button.button);
+                    swallow = SDL_BUTTON_MASK(e.button.button);
+                    continue;
+                }
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && (swallow & SDL_BUTTON_MASK(e.button.button))) {
+                    swallow &= ~SDL_BUTTON_MASK(e.button.button);
+                    continue;
+                }
+                if (swallow) continue;
                 float density = g_win ? SDL_GetWindowPixelDensity(g_win) : 1.0f;
                 float mx = e.type == SDL_EVENT_MOUSE_MOTION ? e.motion.x : e.button.x;
                 float my = e.type == SDL_EVENT_MOUSE_MOTION ? e.motion.y : e.button.y;
                 bool down = e.type == SDL_EVENT_MOUSE_MOTION ? (e.motion.state & SDL_BUTTON_LMASK) != 0
                                                              : e.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
                 menu::pointer(mx * density, my * density, down);
+            } else if (e.type == SDL_EVENT_MOUSE_WHEEL) {
+                if (menu::listening() && e.wheel.y != 0) {
+                    const float y = e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y;
+                    menu::bind(y > 0 ? 3 : 4, 0);
+                    continue;
+                }
+                if (menu::is_open()) {  // the F1 menu is open: the wheel scrolls it
+                    menu::wheel(e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y);
+                    continue;
+                }
+                input::mouse::event(e);
             } else if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
                 g_draw_w = e.window.data1;
                 g_draw_h = e.window.data2;
@@ -819,6 +866,7 @@ void run() {
                 LOG("controls: SDL text input was on; stopped it so keyboard keys reach the game");
             }
         }
+        if (!g_headless) input::mouse::update(g_win, !menu::is_open() && !keyboard_active && !g_background);
         apply_input();
         // Freeze watchdog: no game frame for 8 s while in the foreground -> log every thread (once a minute)
         {

@@ -30,6 +30,7 @@
 #include "thread.h"
 #include "utf8_path.h"
 #include "host/window.h"
+#include "input/pc_prompts.h"
 #include "latte/latte.h"
 
 extern "C" int g_trace_hle;
@@ -244,6 +245,7 @@ int main(int argc, char** argv) {
     }
     region::init(g_game_root, language);
     mods::init(g_game_root, g_user_root, use_mods, use_dlc, region::get().title_id);
+    pcprompts::prepare(g_game_root, g_user_root);  // PC key prompts (pc_controls.ini bindings)
 #if defined(_WIN32)
     if (HMODULE winmm = LoadLibraryA("winmm.dll")) {
         using TimeBeginPeriodFn = UINT(WINAPI*)(UINT);

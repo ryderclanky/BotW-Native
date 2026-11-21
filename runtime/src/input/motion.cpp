@@ -36,10 +36,11 @@ struct Mahony {
     float bias[3]{};
     double bias_sum[3]{};
     uint64_t bias_n = 0;
+    bool learn_bias = true;  // off for the virtual GamePad (its rates are exact)
 
     void update(float dt, float gx, float gy, float gz, float ax, float ay, float az) {
         if (dt > 0.2f) dt = 0.2f;
-        if (fabsf(gx) < 0.35f && fabsf(gy) < 0.35f && fabsf(gz) < 0.35f) {  // at rest: learn the bias
+        if (learn_bias && fabsf(gx) < 0.35f && fabsf(gy) < 0.35f && fabsf(gz) < 0.35f) {  // at rest: learn the bias
             bias_sum[0] += gx, bias_sum[1] += gy, bias_sum[2] += gz;
             if (++bias_n >= 200)
                 for (int k = 0; k < 3; k++) bias[k] = (float)(bias_sum[k] / (double)bias_n);
@@ -86,30 +87,77 @@ float g_acc[3]{}, g_prev_acc[3]{}, g_gyro[3]{};  // handler space
 float g_sens_acc[3]{}, g_sens_gyro[3]{};       // latest tracked samples
 Motion g_out;
 
+// VPAD values from the fusion and the handler-space sample it was given (WiiUMotionHandler / MotionSample).
+void fill(const Mahony& imu, const float acc[3], const float prev_acc[3], const float gyro[3], Motion& m) {
+    m.acc[0] = -acc[0], m.acc[1] = -acc[1], m.acc[2] = acc[2];
+    m.acc_magnitude = sqrtf(acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]);
+    float dx = acc[0] - prev_acc[0], dy = acc[1] - prev_acc[1], dz = acc[2] - prev_acc[2];
+    m.acc_acceleration = sqrtf(dx * dx + dy * dy + dz * dz);
+    m.gyro_change[0] = rad_to_rev(-(gyro[0] - imu.bias[0]));
+    m.gyro_change[1] = rad_to_rev(-(gyro[1] - imu.bias[1]));
+    m.gyro_change[2] = rad_to_rev(gyro[2] - imu.bias[2]);
+    m.orientation[0] = rad_to_rev(-(imu.yaw + imu.yaw_w * 2 * kPi)) - 0.5f;
+    m.orientation[1] = rad_to_rev(-(imu.pitch + imu.pitch_w * 2 * kPi)) - 0.5f;
+    m.orientation[2] = rad_to_rev(imu.roll + imu.roll_w * 2 * kPi);
+    x_vector(imu.q, m.dir + 0);
+    x_vector(imu.q * Quat::angle_axis(kPi / 2, 0, 0, 1), m.dir + 3);
+    x_vector(imu.q * Quat::angle_axis(kPi / 2, 0, 1, 0), m.dir + 6);
+}
+
 void integrate(float dt) {
     // WiiUMotionHandler::processMotionSample(dt, gyro, acc.x, -acc.y, -acc.z)
     float ax = g_sens_acc[0], ay = -g_sens_acc[1], az = -g_sens_acc[2];
     for (int k = 0; k < 3; k++) g_prev_acc[k] = g_acc[k], g_gyro[k] = g_sens_gyro[k];
     g_acc[0] = ax, g_acc[1] = ay, g_acc[2] = az;
     g_imu.update(dt, g_gyro[0], g_gyro[1], g_gyro[2], ax, ay, az);
-
-    Motion& m = g_out;
-    m.acc[0] = -g_acc[0], m.acc[1] = -g_acc[1], m.acc[2] = g_acc[2];
-    m.acc_magnitude = sqrtf(ax * ax + ay * ay + az * az);
-    float dx = g_acc[0] - g_prev_acc[0], dy = g_acc[1] - g_prev_acc[1], dz = g_acc[2] - g_prev_acc[2];
-    m.acc_acceleration = sqrtf(dx * dx + dy * dy + dz * dz);
-    m.gyro_change[0] = rad_to_rev(-(g_gyro[0] - g_imu.bias[0]));
-    m.gyro_change[1] = rad_to_rev(-(g_gyro[1] - g_imu.bias[1]));
-    m.gyro_change[2] = rad_to_rev(g_gyro[2] - g_imu.bias[2]);
-    m.orientation[0] = rad_to_rev(-(g_imu.yaw + g_imu.yaw_w * 2 * kPi)) - 0.5f;
-    m.orientation[1] = rad_to_rev(-(g_imu.pitch + g_imu.pitch_w * 2 * kPi)) - 0.5f;
-    m.orientation[2] = rad_to_rev(g_imu.roll + g_imu.roll_w * 2 * kPi);
-    x_vector(g_imu.q, m.dir + 0);
-    x_vector(g_imu.q * Quat::angle_axis(kPi / 2, 0, 0, 1), m.dir + 3);
-    x_vector(g_imu.q * Quat::angle_axis(kPi / 2, 0, 1, 0), m.dir + 6);
+    fill(g_imu, g_acc, g_prev_acc, g_gyro, g_out);
     g_valid = true;
 }
+
+// Virtual GamePad (PC Motion Control): its own fusion, fed a simulated IMU for a pose.
+std::mutex g_vlock;
+Mahony fresh_virtual() {
+    Mahony m;
+    m.learn_bias = false;
+    return m;
+}
+Mahony g_vimu = fresh_virtual();
+float g_vacc[3] = {0, 1, 0};  // handler space, lying flat
 }  // namespace
+
+void virtual_motion(const float pose[4], float dt, Motion* out) {
+    // Port of Zelda-on-PC's FillMotion (PCInput.cpp, MPL-2.0): the rate is the one that takes the fusion's own
+    // orientation to the pose within this sample (closed loop: nothing drifts), the accelerometer is gravity for
+    // the pose, so attitude, accumulated angles, rates and accelerometer agree as with a physical controller.
+    std::lock_guard<std::mutex> l(g_vlock);
+    Quat p{pose[0], pose[1], pose[2], pose[3]};
+    p.normalize_xyzw();
+    const Quat& qf = g_vimu.q;
+    const Quat d = Quat{qf.w, -qf.x, -qf.y, -qf.z} * p;  // the fusion integrates q' = q * (1, rate * dt / 2)
+    if (dt < 1.0f / 1000.0f) dt = 1.0f / 1000.0f;
+    if (dt > 0.2f) dt = 0.2f;
+    float rate[3] = {0, 0, 0};
+    if (fabsf(d.w) > 0.01f) {
+        const float k = 2.0f / (d.w * dt);
+        rate[0] = d.x * k, rate[1] = d.y * k, rate[2] = d.z * k;
+    }
+    for (float& r : rate) {
+        r = fmaxf(-60.0f, fminf(60.0f, r));
+        if (fabsf(r) < 0.0005f) r = 0;  // settled: exactly static
+    }
+    const float grav[3] = {2.0f * (p.x * p.z - p.w * p.y), 2.0f * (p.y * p.z + p.w * p.x),
+                           2.0f * (p.w * p.w + p.z * p.z) - 1.0f};  // Quaternion::GetVectorZ
+    float prev[3] = {g_vacc[0], g_vacc[1], g_vacc[2]};
+    for (int k = 0; k < 3; k++) g_vacc[k] = grav[k];
+    g_vimu.update(dt, rate[0], rate[1], rate[2], grav[0], grav[1], grav[2]);
+    fill(g_vimu, g_vacc, prev, rate, *out);
+}
+
+void virtual_motion_reset() {
+    std::lock_guard<std::mutex> l(g_vlock);
+    g_vimu = fresh_virtual();
+    g_vacc[0] = 0, g_vacc[1] = 1, g_vacc[2] = 0;
+}
 
 void motion_sensor(bool gyro, const float data[3], uint64_t ts) {
     std::lock_guard<std::mutex> l(g_lock);
