@@ -134,6 +134,13 @@ keyboard and gamepad controls.
 
 F1 opens the settings menu. F11 toggles fullscreen.
 
+Xbox button prompts: `python tools/xbox_prompts.py --game /path/to/game` redraws the game's button
+font from your own files (LB/RB, LT/RT, Menu, View) and installs it as the `XboxPrompts` mod in the
+user folder. With the Buttons setting **A = right** (`layout=0`, or `--layout position`) the A/B and
+X/Y prompts are swapped so each names the Xbox button that presses it; `--layout label` keeps them.
+`--preview out.png` writes the old and new glyphs side by side. Run it again after changing the
+Buttons setting. The HUD's button images in play are not redrawn yet.
+
 F2 shows the GamePad screen beside the TV image, and F2 again hides it. On a controller the
 same toggle is the Guide button (or the Share button on pads that have one). It is also a row
 in the settings menu, so a pad without those buttons can use L3+R3 and pick it there. It is
