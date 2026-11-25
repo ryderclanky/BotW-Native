@@ -3779,6 +3779,60 @@ void VulkanRenderer::texture_copyImageSubData(LatteTexture* src, sint32 srcMip, 
 	barrier_image<SYNC_OP::ANY_TRANSFER, SYNC_OP::IMAGE_READ | SYNC_OP::IMAGE_WRITE | SYNC_OP::ANY_TRANSFER>(dstVk, region.dstSubresource, dstVk->GetDefaultLayout());
 }
 
+// BotWRecomp: Cemu drops syncs between overlapping textures whose resolution scale differs (one matched a texture
+// rule, the other did not). BotW's message-box text is drawn into small native-size targets and read back through
+// a scaled one, so at render scales above 1 the text vanished. Resample the region with a linear blit instead.
+bool VulkanRenderer::texture_blitScaled(LatteTexture* src, sint32 srcMip, sint32 srcSlice, sint32 srcX, sint32 srcY, sint32 srcW, sint32 srcH, LatteTexture* dst, sint32 dstMip, sint32 dstSlice, sint32 dstX, sint32 dstY, sint32 dstW, sint32 dstH)
+{
+	LatteTextureVk* srcVk = static_cast<LatteTextureVk*>(src);
+	LatteTextureVk* dstVk = static_cast<LatteTextureVk*>(dst);
+	if (src->isDepth || dst->isDepth || src->Is3DTexture() || dst->Is3DTexture())
+		return false;
+	if (srcVk->GetImageAspect() != VK_IMAGE_ASPECT_COLOR_BIT || dstVk->GetImageAspect() != VK_IMAGE_ASPECT_COLOR_BIT)
+		return false;
+	{
+		// keep both rectangles inside their mip (effective sizes can round down by a texel)
+		sint32 sw, sh, dw, dh;
+		src->GetEffectiveSize(sw, sh, srcMip);
+		dst->GetEffectiveSize(dw, dh, dstMip);
+		srcW = std::min(srcW, sw - srcX);
+		srcH = std::min(srcH, sh - srcY);
+		dstW = std::min(dstW, dw - dstX);
+		dstH = std::min(dstH, dh - dstY);
+	}
+	if (srcX < 0 || srcY < 0 || dstX < 0 || dstY < 0 || srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0)
+		return false;
+	auto blittable = [this](VkFormat f, VkFormatFeatureFlags need) {
+		VkFormatProperties props{};
+		vkGetPhysicalDeviceFormatProperties(m_physicalDevice, f, &props);
+		return (props.optimalTilingFeatures & need) == need;
+	};
+	if (!blittable(srcVk->GetFormat(), VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ||
+		!blittable(dstVk->GetFormat(), VK_FORMAT_FEATURE_BLIT_DST_BIT))
+		return false;
+
+	draw_endRenderPass(); // vkCmdBlitImage must be called outside of a renderpass
+	VKRObjectTexture* srcVkObj = srcVk->GetImageObj();
+	VKRObjectTexture* dstVkObj = dstVk->GetImageObj();
+	srcVkObj->flagForCurrentCommandBuffer();
+	dstVkObj->flagForCurrentCommandBuffer();
+
+	VkImageBlit region{};
+	region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, (uint32)srcMip, (uint32)srcSlice, 1};
+	region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, (uint32)dstMip, (uint32)dstSlice, 1};
+	region.srcOffsets[0] = {srcX, srcY, 0};
+	region.srcOffsets[1] = {srcX + srcW, srcY + srcH, 1};
+	region.dstOffsets[0] = {dstX, dstY, 0};
+	region.dstOffsets[1] = {dstX + dstW, dstY + dstH, 1};
+
+	barrier_image<SYNC_OP::IMAGE_WRITE | SYNC_OP::ANY_TRANSFER, SYNC_OP::ANY_TRANSFER>(srcVk, region.srcSubresource, VK_IMAGE_LAYOUT_GENERAL);
+	barrier_image<SYNC_OP::IMAGE_READ | SYNC_OP::IMAGE_WRITE | SYNC_OP::ANY_TRANSFER, SYNC_OP::ANY_TRANSFER>(dstVk, region.dstSubresource, VK_IMAGE_LAYOUT_GENERAL);
+	vkCmdBlitImage(m_state.currentCommandBuffer, srcVkObj->m_image, VK_IMAGE_LAYOUT_GENERAL, dstVkObj->m_image, VK_IMAGE_LAYOUT_GENERAL, 1, &region, VK_FILTER_LINEAR);
+	barrier_image<SYNC_OP::ANY_TRANSFER, SYNC_OP::IMAGE_READ | SYNC_OP::IMAGE_WRITE | SYNC_OP::ANY_TRANSFER>(srcVk, region.srcSubresource, srcVk->GetDefaultLayout());
+	barrier_image<SYNC_OP::ANY_TRANSFER, SYNC_OP::IMAGE_READ | SYNC_OP::IMAGE_WRITE | SYNC_OP::ANY_TRANSFER>(dstVk, region.dstSubresource, dstVk->GetDefaultLayout());
+	return true;
+}
+
 LatteTextureReadbackInfo* VulkanRenderer::texture_createReadback(LatteTextureView* textureView)
 {
 	auto* result = new LatteTextureReadbackInfoVk(m_logicalDevice, textureView);

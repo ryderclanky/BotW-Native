@@ -807,7 +807,12 @@ void VulkanRenderer::surfaceCopy_copySurfaceWithFormatConversion(LatteTexture* s
 	// todo - if not, we have to use drawcall based copying
 	if (!LatteTexture_doesEffectiveRescaleRatioMatch(srcTextureVk, texSrcMip, dstTextureVk, texDstMip))
 	{
-		cemuLog_logDebug(LogType::Force, "surfaceCopy_copySurfaceViaDrawcall(): Mismatching dimensions");
+		// BotWRecomp: logged (once per size pair) since the copy is dropped
+		static std::unordered_set<uint64> s_logged;
+		const uint64 key = (uint64)sourceTexture->width | ((uint64)sourceTexture->height << 16) | ((uint64)destinationTexture->width << 32) | ((uint64)destinationTexture->height << 48);
+		if (s_logged.insert(key).second)
+			cemuLog_log(LogType::Force, "[rt] format-conversion copy skipped, scale mismatch: src {}x{} fmt 0x{:03x} -> dst {}x{} fmt 0x{:03x}",
+				sourceTexture->width, sourceTexture->height, (uint32)sourceTexture->format, destinationTexture->width, destinationTexture->height, (uint32)destinationTexture->format);
 		return;
 	}
 
