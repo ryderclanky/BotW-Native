@@ -8,9 +8,18 @@
 // - A few systems use hardcoded 30 fps constants; scale those by g_delta too.
 // - Some cutscenes are known to crash above 30 fps; hold those at 30.
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstring>
+#include <string>
 
 #include "hooks.h"
+
+namespace threads {
+std::string main_frame_waits();
+}
+// steady_clock ms of the last game frame start; window.cpp's stall probe samples the main thread when overdue
+std::atomic<uint64_t> g_main_frame_ms{0};
 
 namespace {
 constexpr int kAvgFrames = 8;
@@ -74,6 +83,17 @@ BOTW_HOOK(0x031fa97c) {
     } else if (clamp && g_clamp_logs < 8) {
         g_clamp_logs++;
         LOG("frame span %.3fs clamped to 50 ms", (double)ticks / kTicksPerSecond);
+    }
+    {
+        // Long frames: how long the main thread waited, per kind (GX2DrawDone, mutex, ...). The rest is CPU work.
+        static int long_logs = 0;
+        std::string waits = threads::main_frame_waits();
+        g_main_frame_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (elapsed_ticks > kTicksPerSecond / 10 && long_logs < 60) {
+            long_logs++;
+            LOG("long frame %.0f ms: main waits %s", elapsed_ticks * 1000.0 / kTicksPerSecond, waits.c_str());
+        }
     }
     if (clamp) {
         ticks = kMaxStep;

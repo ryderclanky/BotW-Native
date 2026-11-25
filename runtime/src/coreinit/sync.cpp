@@ -237,7 +237,7 @@ __attribute__((noinline)) void mutex_lock_contended(GuestThread* me, uint32_t m,
 
 inline void mutex_lock(PPCContext* c, uint32_t m) {
     GuestThread* me = c && c->thread ? (GuestThread*)c->thread : threads::current();
-    if (__builtin_expect(me && me->prio >= 18, 0)) threads::maybe_preempt_sync(me);
+    if (__builtin_expect(me && me->prio >= 17, 0)) threads::maybe_preempt_sync(me);
     MutexState* s = get_mutex_fast(me, m);
     GuestThread* cur = s->owner.load(std::memory_order_relaxed);
     if (__builtin_expect(cur == me && me != nullptr, 0)) {
@@ -288,7 +288,7 @@ inline void mutex_unlock(PPCContext* c, uint32_t m) {
         if (__builtin_expect(s->waiters.load(std::memory_order_seq_cst) > 0, 0)) mutex_unlock_wake(s);
         if (me) {
             if (--me->held_mutex_count <= 0) me->held_mutex_count = 0;
-            if (__builtin_expect(me->prio >= 18, 0)) threads::maybe_preempt_sync(me);
+            if (__builtin_expect(me->prio >= 17, 0)) threads::maybe_preempt_sync(me);
         }
     }
 }
@@ -386,7 +386,7 @@ HLE_EXPORT(coreinit, OSSignalEvent) {
         event_signal_wake(e, *(const uint32_t*)(g_mem + e + 0x20));
     }
     GuestThread* me = c && c->thread ? (GuestThread*)c->thread : threads::current();
-    if (__builtin_expect(me && me->prio >= 18, 0)) threads::maybe_preempt(me);
+    if (__builtin_expect(me && me->prio >= 17, 0)) threads::maybe_preempt(me);
 }
 HLE_EXPORT(coreinit, OSResetEvent) {
     uint32_t* val_ptr = (uint32_t*)(g_mem + ARG(0) + 0x0C);
@@ -396,7 +396,7 @@ HLE_EXPORT(coreinit, OSWaitEvent) {
     uint32_t e = ARG(0);
     if (__builtin_expect(event_try_consume(e), 1)) {
         GuestThread* me = c && c->thread ? (GuestThread*)c->thread : threads::current();
-        if (__builtin_expect(me && me->prio >= 18, 0)) threads::maybe_preempt(me);
+        if (__builtin_expect(me && me->prio >= 17, 0)) threads::maybe_preempt(me);
         return;
     }
     threads::CoreHandoff handoff;

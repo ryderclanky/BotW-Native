@@ -87,7 +87,18 @@ struct CoreExec {
         uint64_t ticket = ++next_ticket;
         waiters.push_back({t, p, ticket});
         recompute_min_locked();
+        // Long waits of the main thread for its core are logged with the thread that had it (stall diagnosis).
+        const bool log_wait = t && t->is_main;
+        const uint64_t wait_t0 = log_wait ? sched_now_ns() : 0;
+        char holder[48] = "none";
+        int holder_prio = -1;
+        uint32_t holder_lr = 0;
         for (;;) {
+            if (log_wait && owner && owner != t) {
+                snprintf(holder, sizeof(holder), "%s", owner->name.empty() ? "guest" : owner->name.c_str());
+                holder_prio = owner->prio;
+                holder_lr = owner->ctx.lr;
+            }
             if (can_acquire(ticket)) break;
             uint64_t until = (p >= 18) ? wake_high_until_ns.load(std::memory_order_relaxed) : 0;
             if (owner == nullptr && until != 0) {
@@ -108,6 +119,14 @@ struct CoreExec {
         }
         recompute_min_locked();
         owner = t;
+        if (log_wait) {
+            uint64_t ns = sched_now_ns() - wait_t0;
+            if (ns >= 50000000ull) {
+                lk.unlock();
+                LOG("core wait: main waited %.0f ms for its core, held by %s (prio %d, lr %08x)", ns / 1e6, holder,
+                    holder_prio, holder_lr);
+            }
+        }
     }
 
     void unlock() {
@@ -327,39 +346,53 @@ bool should_yield_core(GuestThread* me) {
     return false;
 }
 
+// Should the running thread hand its core over at this sync point? Background threads (prio 18+) do so for
+// any foreground waiter (prio <= 17) or a reserved high-priority wake. A prio-17 thread does so when a more
+// urgent thread waits for the core: without this, "GameScen TaskMgr" (17, core 1) kept core 1 for ~1.5 s
+// while the main thread (16) waited to come back from GX2DrawDone (title screen Continue stall).
+static bool preempt_demand(GuestThread* me, CoreExec& cs) {
+    int mw = cs.min_waiter_prio.load(std::memory_order_acquire);
+    if (me->prio < 18) return mw < me->prio;
+    if (mw <= 17) return true;
+    uint64_t until = cs.wake_high_until_ns.load(std::memory_order_acquire);
+    return until != 0 && sched_now_ns() < until;
+}
+
 void maybe_preempt_current_fast() {
     GuestThread* me = t_current;
-    if (__builtin_expect(!me || me->prio < 18 || me->held_mutex_count > 0 || t_exec_depth == 0 || t_exec_core < 0, 1)) return;
+    if (__builtin_expect(!me || me->prio < 17 || me->held_mutex_count > 0 || t_exec_depth == 0 || t_exec_core < 0, 1)) return;
     auto& cs = g_exec[t_exec_core];
-    if (__builtin_expect(cs.min_waiter_prio.load(std::memory_order_relaxed) <= 17 ||
+    if (__builtin_expect(cs.min_waiter_prio.load(std::memory_order_relaxed) < me->prio ||
                          cs.wake_high_until_ns.load(std::memory_order_relaxed) != 0, 0)) {
         maybe_preempt(me);
     }
 }
 
+// Preemption point for copy/fill calls (coreinit memcpy & co., declared in mem_heap.cpp): hand the core over only
+// when a more urgent thread is actually queued for it. Unlike maybe_preempt this ignores the short "high wake"
+// reservation, which would make a background loop of tiny copies (the save-picture JPEG decoder: one memcpy per
+// pixel) sleep out that window again and again. Returns true when it yielded.
+bool yield_to_waiter() {
+    GuestThread* me = t_current;
+    if (__builtin_expect(!me || me->prio < 17 || me->held_mutex_count > 0 || t_exec_depth == 0 || t_exec_core < 0, 1))
+        return false;
+    if (__builtin_expect(g_exec[t_exec_core].min_waiter_prio.load(std::memory_order_relaxed) >= me->prio, 1)) return false;
+    exec_yield();
+    exec_resume();
+    return true;
+}
+
 void maybe_preempt(GuestThread* me) {
-    if (!me || me->held_mutex_count > 0 || me->prio < 18 || t_exec_depth == 0 || t_exec_core < 0) return;
-    auto& cs = g_exec[t_exec_core];
-    bool demand = (cs.min_waiter_prio.load(std::memory_order_acquire) <= 17);
-    if (!demand) {
-        uint64_t until = cs.wake_high_until_ns.load(std::memory_order_acquire);
-        if (until != 0 && sched_now_ns() < until) demand = true;
-    }
-    if (demand) {
+    if (!me || me->held_mutex_count > 0 || me->prio < 17 || t_exec_depth == 0 || t_exec_core < 0) return;
+    if (preempt_demand(me, g_exec[t_exec_core])) {
         exec_yield();
         exec_resume();
     }
 }
 
 void maybe_preempt_sync(GuestThread* me) {
-    if (!me || me->prio < 18 || t_exec_depth == 0 || t_exec_core < 0) return;
-    auto& cs = g_exec[t_exec_core];
-    bool demand = (cs.min_waiter_prio.load(std::memory_order_acquire) <= 17);
-    if (!demand) {
-        uint64_t until = cs.wake_high_until_ns.load(std::memory_order_acquire);
-        if (until != 0 && sched_now_ns() < until) demand = true;
-    }
-    if (demand) {
+    if (!me || me->prio < 17 || t_exec_depth == 0 || t_exec_core < 0) return;
+    if (preempt_demand(me, g_exec[t_exec_core])) {
         exec_yield();
         exec_resume();
     }
@@ -426,7 +459,8 @@ uint32_t sda_base() { return loader::main_module().sda_base; }
 
 namespace {
 std::mutex g_wait_stats_lock;
-std::vector<std::pair<const char*, uint64_t>> g_wait_stats;  // kind -> ns
+std::vector<std::pair<const char*, uint64_t>> g_wait_stats;   // kind -> ns
+std::vector<std::pair<const char*, uint64_t>> g_frame_waits;  // same, since the last game frame
 auto g_wait_stats_t0 = std::chrono::steady_clock::now();
 }  // namespace
 void note_main_wait(const char* kind, uint32_t obj, uint32_t lr, uint64_t ns) {
@@ -443,12 +477,52 @@ void note_main_wait(const char* kind, uint32_t obj, uint32_t lr, uint64_t ns) {
         (void)lr;
     }
     std::lock_guard<std::mutex> l(g_wait_stats_lock);
+    bool in_frame = false;
+    for (auto& [k, v] : g_frame_waits)
+        if (k == kind) {
+            v += ns;
+            in_frame = true;
+            break;
+        }
+    if (!in_frame) g_frame_waits.push_back({kind, ns});
     for (auto& [k, v] : g_wait_stats)
         if (k == kind) {
             v += ns;
             return;
         }
     g_wait_stats.push_back({kind, ns});
+}
+// Main-thread waits since the last call, per kind (fps.cpp calls it once a game frame; long frames log it).
+std::string main_frame_waits() {
+    std::lock_guard<std::mutex> l(g_wait_stats_lock);
+    std::string s;
+    char buf[96];
+    for (auto& [k, v] : g_frame_waits) {
+        if (v >= 1000000) {
+            snprintf(buf, sizeof buf, "%s%s %.0f ms", s.empty() ? "" : ", ", k, v / 1e6);
+            s += buf;
+        }
+    }
+    g_frame_waits.clear();
+    return s.empty() ? "none" : s;
+}
+// Stall probe (window.cpp, while a game frame is overdue): what the main thread is doing, with its host stack.
+void log_main_state(const char* label) {
+    pthread_t th{};
+    char what[160] = "not found";
+    {
+        std::lock_guard<std::mutex> l(g_klock);
+        for (auto& [os, t] : g_threads) {
+            if (!t->is_main || t->exited) continue;
+            const char* k = t->wait_kind;
+            if (k) snprintf(what, sizeof what, "waiting: %s %08x (lr %08x)", k, (uint32_t)t->wait_obj, (uint32_t)t->wait_lr);
+            else snprintf(what, sizeof what, "running (lr %08x)", t->ctx.lr);
+            th = t->host_tid;
+            break;
+        }
+    }
+    LOG("%s: main %s", label, what);
+    if (th) sample_host(th, "main");
 }
 std::string main_wait_report() {
     std::lock_guard<std::mutex> l(g_wait_stats_lock);

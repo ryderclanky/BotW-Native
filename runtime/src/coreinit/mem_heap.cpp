@@ -356,30 +356,42 @@ void dc_flush(uint32_t addr, uint32_t size) {
     LatteBufferCache_notifyDCFlush(a, e - a);
 }
 }  // namespace
+// Copy/fill calls are also preemption points (the caller yields only when a strictly more urgent thread is queued
+// for its core): a background thread that loops over them without any lock or event call (uiLowPrioThreadMgr converts the Continue screen's save picture with one memcpy per pixel)
+// otherwise keeps its core while a more urgent thread waits for it (WorkerMgr/Worker2 on core 2, which the main
+// thread waits for: ~0.2-0.5 s frames after Continue). One relaxed load per call when nobody waits.
+namespace threads {
+bool yield_to_waiter();  // thread.cpp
+}
 HLE_EXPORT(coreinit, memcpy) {
+    threads::yield_to_waiter();
     mem::commit(ARG(0), ARG(2), true);
     mem::commit(ARG(1), ARG(2), false);
     memcpy(mem::host(ARG(0)), mem::host(ARG(1)), ARG(2));
     if (ARG(2)) LatteBufferCache_notifyDCFlush(ARG(0), ARG(2));  // COS memcpy always flushes
 }
 HLE_EXPORT(coreinit, memmove) {
+    threads::yield_to_waiter();
     mem::commit(ARG(0), ARG(2), true);
     mem::commit(ARG(1), ARG(2), false);
     memmove(mem::host(ARG(0)), mem::host(ARG(1)), ARG(2));
     if (ARG(2)) LatteBufferCache_notifyDCFlush(ARG(0), ARG(2));
 }
 HLE_EXPORT(coreinit, memset) {
+    threads::yield_to_waiter();
     mem::commit(ARG(0), ARG(2), true);
     memset(mem::host(ARG(0)), (int)(ARG(1) & 0xFF), ARG(2));
 }
 // OSBlockMove(dst, src, size, flushDC)
 HLE_EXPORT(coreinit, OSBlockMove) {
+    threads::yield_to_waiter();
     mem::commit(ARG(0), ARG(2), true);
     mem::commit(ARG(1), ARG(2), false);
     memmove(mem::host(ARG(0)), mem::host(ARG(1)), ARG(2));
     if (ARG(2) && (ARG(3) & 0xFF)) LatteBufferCache_notifyDCFlush(ARG(0), ARG(2));
 }
 HLE_EXPORT(coreinit, OSBlockSet) {
+    threads::yield_to_waiter();
     mem::commit(ARG(0), ARG(2), true);
     memset(mem::host(ARG(0)), (int)(ARG(1) & 0xFF), ARG(2));
 }

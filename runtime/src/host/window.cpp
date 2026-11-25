@@ -27,6 +27,11 @@
 #include <cstdio>
 
 extern std::atomic<pthread_t> g_gpu_thread;  // cemu_shims/overlay_menu.cpp: Cemu's GPU thread
+extern std::atomic<uint64_t> g_main_frame_ms;  // game/fps.cpp: steady_clock ms of the last game frame
+#include <chrono>
+namespace threads {
+void log_main_state(const char* label);  // thread.cpp: stall probe
+}
 #include "menu.h"
 #include "../settings.h"
 #include "touch.h"
@@ -856,6 +861,27 @@ void run() {
             }
             // After the GPU stack. A guest thread can be the one stopped while LatteThread waits.
             if (entered) threads::dump(true);
+        }
+        // Stall probe: a game frame overdue by > 120 ms (foreground) -> log the main thread's state and host stack
+        // plus the GPU thread every 100 ms, at most 12 per stall and 60 a minute (symbolize with addr2line).
+        {
+            static uint64_t next_ms = 0, minute_ms = 0, stall_frame = 0;
+            static int taken = 0, per_stall = 0;
+            const uint64_t now_ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch()).count();
+            const uint64_t last = g_main_frame_ms.load();
+            if (now_ms - minute_ms > 60000) minute_ms = now_ms, taken = 0;
+            if (last != stall_frame) stall_frame = last, per_stall = 0;
+            if (!g_background && last && now_ms - last > 120 && now_ms >= next_ms && taken < 60 && per_stall < 12) {
+                char label[64];
+                snprintf(label, sizeof label, "stall probe +%llu ms", (unsigned long long)(now_ms - last));
+                threads::log_main_state(label);
+                if (pthread_t gpu = g_gpu_thread) threads::sample_host(gpu, "LatteThread");
+                // second sample of a stall: every guest thread with the host stack of the running ones (the workers
+                // main may be waiting for)
+                if (per_stall == 1) threads::dump(true);
+                taken++, per_stall++, next_ms = now_ms + 100;
+            }
         }
         // GamePad rumble at 60 Hz steps
         static uint64_t next_rumble = 0;
