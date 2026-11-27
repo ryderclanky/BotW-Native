@@ -121,7 +121,13 @@ void add_interval(uint64_t b, uint64_t e) {
         if (e > he) g_iv[host].e.store(e, std::memory_order_release);
         return;
     }
-    if (n >= kMaxIv) return;
+    if (n >= kMaxIv) {
+        static std::atomic<bool> told{false};
+        if (!told.exchange(true))
+            LOG("guest commit: interval table full (%d), %08llx-%08llx and later new ranges use the per-thread page "
+                "cache", kMaxIv, (unsigned long long)b, (unsigned long long)e);
+        return;
+    }
     g_iv[n].b.store(b, std::memory_order_relaxed);
     g_iv[n].e.store(e, std::memory_order_relaxed);
     g_iv_n.store(n + 1, std::memory_order_release);
@@ -212,6 +218,22 @@ bool commit_slow(uint32_t addr, size_t bytes, bool write) {
         if (write && watch_blocks_write(begin, end)) return false;
         return true;
     }
+    // Per-thread cache of spans this thread already verified (guest memory is never decommitted, so a verified
+    // span stays committed). Catches ranges the interval table could not record once it is full: e.g. the
+    // Continue screen's JPEG decoder at 0xA88xxxxx copies 3 bytes per pixel, and each miss cost a VirtualQuery.
+    // A span verified for reading only does not satisfy a write check.
+    struct Seen {
+        uint64_t b, e;
+        bool w;
+    };
+    thread_local Seen seen[4] = {};
+    thread_local unsigned seen_next = 0;
+    for (const Seen& s : seen) {
+        if (s.e && begin >= s.b && end <= s.e && (s.w || !write)) {
+            if (write && watch_blocks_write(begin, end)) return false;
+            return true;
+        }
+    }
     const uintptr_t base = (uintptr_t)g_mem;
     const uintptr_t mask = (uintptr_t)g_page - 1;
     uintptr_t start = (base + (uintptr_t)begin) & ~mask;
@@ -245,6 +267,7 @@ bool commit_slow(uint32_t addr, size_t bytes, bool write) {
     uint64_t ge = (uint64_t)(last - base);
     if (ge > (1ull << 32)) ge = (1ull << 32);
     add_interval(gb, ge);
+    seen[seen_next++ & 3] = Seen{gb, ge, write};
     return true;
 #endif
 }

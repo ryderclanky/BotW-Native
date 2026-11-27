@@ -122,7 +122,14 @@ void LatteSurfaceCopy_copySurfaceNew(const LatteSurfaceCopyParam& src, const Lat
 		}
 		else
 		{
-			debug_printf("gx2CP_itHLECopySurface(): Copy texture with non-matching effective size\n");
+			// BotWRecomp: this copy is dropped (one side resolution-scaled, the other not); log each size pair once
+			static std::unordered_set<uint64> s_logged;
+			const uint64 key = (uint64)sourceTexture->width | ((uint64)sourceTexture->height << 16) | ((uint64)destinationTexture->width << 32) | ((uint64)destinationTexture->height << 48);
+			if (s_logged.insert(key).second)
+				cemuLog_log(LogType::Force, "[rt] copy skipped, scale mismatch: src {}x{} (as {}x{}) fmt 0x{:03x} tm {} -> dst {}x{} (as {}x{}) fmt 0x{:03x} tm {}, rect {}x{}",
+					sourceTexture->width, sourceTexture->height, LatteTexture_getEffectiveWidth(sourceTexture), sourceTexture->overwriteInfo.hasResolutionOverwrite ? sourceTexture->overwriteInfo.height : sourceTexture->height, (uint32)sourceTexture->format, (uint32)sourceTexture->tileMode,
+					destinationTexture->width, destinationTexture->height, LatteTexture_getEffectiveWidth(destinationTexture), destinationTexture->overwriteInfo.hasResolutionOverwrite ? destinationTexture->overwriteInfo.height : destinationTexture->height, (uint32)destinationTexture->format, (uint32)destinationTexture->tileMode,
+					rect.width, rect.height);
 		}
 		LatteTC_ResetTextureChangeTracker(destinationTexture);
 		// flag texture as updated

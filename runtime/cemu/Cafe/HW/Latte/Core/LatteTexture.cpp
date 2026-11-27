@@ -298,6 +298,21 @@ bool LatteTexture_IsTexelSizeCompatibleFormat(Latte::E_GX2SURFFMT formatA, Latte
 	return Latte::GetFormatBits((Latte::E_GX2SURFFMT)formatA) == Latte::GetFormatBits((Latte::E_GX2SURFFMT)formatB);
 }
 
+// BotWRecomp: log once per size pair when a sync between textures of different resolution scale is resampled
+// (or, if the renderer cannot, still dropped)
+static void _logScaledSync(LatteTexture* src, LatteTexture* dst, bool blitted)
+{
+	static std::unordered_set<uint64> s_logged;
+	const uint64 key = (uint64)src->width | ((uint64)src->height << 16) | ((uint64)dst->width << 32) | ((uint64)dst->height << 48) | (blitted ? 0 : (1ull << 63));
+	if (!s_logged.insert(key).second)
+		return;
+	sint32 sw, sh, dw, dh;
+	src->GetEffectiveSize(sw, sh, 0);
+	dst->GetEffectiveSize(dw, dh, 0);
+	cemuLog_log(LogType::Force, "[rt] {} texture sync with different scale: src {}x{} (as {}x{}) fmt 0x{:03x} -> dst {}x{} (as {}x{}) fmt 0x{:03x}",
+		blitted ? "resampled" : "DROPPED", src->width, src->height, sw, sh, (uint32)src->format, dst->width, dst->height, dw, dh, (uint32)dst->format);
+}
+
 void LatteTexture_copyData(LatteTexture* srcTexture, LatteTexture* dstTexture, sint32 mipCount, sint32 sliceCount)
 {
 	cemu_assert_debug(mipCount != 0);
@@ -320,6 +335,24 @@ void LatteTexture_copyData(LatteTexture* srcTexture, LatteTexture* dstTexture, s
 		cemuLog_logDebug(LogType::Force, "texture_copyData(): Effective size mismatch (due to texture rule)");
 		cemuLog_logDebug(LogType::Force, "Destination: origResolution {:04}x{:04} effectiveResolution {:04}x{:04} fmt {:04x} mipIndex {}", srcTexture->width, srcTexture->height, effectiveWidth_dst, effectiveHeight_dst, (uint32)dstTexture->format, 0);
 		cemuLog_logDebug(LogType::Force, "Source:      origResolution {:04}x{:04} effectiveResolution {:04}x{:04} fmt {:04x} mipIndex {}", srcTexture->width, srcTexture->height, effectiveWidth_src, effectiveHeight_src, (uint32)srcTexture->format, 0);
+		// BotWRecomp: resample instead of dropping the data
+		bool blitted = !srcTexture->Is3DTexture() && !dstTexture->Is3DTexture();
+		for (sint32 mipIndex = 0; blitted && mipIndex < mipCount; mipIndex++)
+		{
+			sint32 sw, sh, dw, dh;
+			srcTexture->GetEffectiveSize(sw, sh, mipIndex);
+			dstTexture->GetEffectiveSize(dw, dh, mipIndex);
+			for (sint32 sliceIndex = 0; blitted && sliceIndex < sliceCount; sliceIndex++)
+			{
+				blitted = g_renderer->texture_blitScaled(srcTexture, mipIndex, sliceIndex, 0, 0, sw, sh, dstTexture, mipIndex, sliceIndex, 0, 0, dw, dh);
+				if (!blitted)
+					break;
+				LatteTextureSliceMipInfo* srcTexSliceInfo = srcTexture->sliceMipInfo + srcTexture->GetSliceMipArrayIndex(sliceIndex, mipIndex);
+				LatteTextureSliceMipInfo* dstTexSliceInfo = dstTexture->sliceMipInfo + dstTexture->GetSliceMipArrayIndex(sliceIndex, mipIndex);
+				dstTexSliceInfo->lastDynamicUpdate = srcTexSliceInfo->lastDynamicUpdate;
+			}
+		}
+		_logScaledSync(srcTexture, dstTexture, blitted);
 		return;
 	}
 	for (sint32 mipIndex = 0; mipIndex < mipCount; mipIndex++)
@@ -396,6 +429,12 @@ void LatteTexture_CopySlice(LatteTexture* srcTexture, sint32 srcSlice, sint32 sr
 			cemuLog_log(LogType::Force, "Destination: {:08x} origResolution {:4}/{:4} effectiveResolution {:4}/{:4} fmt {:04x} mipIndex {} ratioW/H: {:.4}/{:.4}", dstTexture->physAddress, dstTexture->width, dstTexture->height, effectiveWidth_dst, effectiveHeight_dst, (uint32)dstTexture->format, dstMip, ratioWidth_dst, ratioHeight_dst);
 		}
 		//cemuLog_logDebug(LogType::Force, "If these textures are not meant to share data you can ignore this");
+		// BotWRecomp: resample the region at each side's own scale instead of dropping it
+		sint32 dstCopyWidth = width, dstCopyHeight = height;
+		LatteTexture_scaleToEffectiveSize(dstTexture, &dstCopyWidth, &dstCopyHeight, 0);
+		const bool blitted = g_renderer->texture_blitScaled(srcTexture, srcMip, srcSlice, effectiveSrcX, effectiveSrcY, effectiveCopyWidth, effectiveCopyHeight,
+			dstTexture, dstMip, dstSlice, effectiveDstX, effectiveDstY, dstCopyWidth, dstCopyHeight);
+		_logScaledSync(srcTexture, dstTexture, blitted);
 		return;
 	}
 	// todo - store 'lastUpdated' value per slice/mip and copy it's value when copying the slice data

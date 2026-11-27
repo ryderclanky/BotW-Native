@@ -326,6 +326,7 @@ public:
 	void texture_setLatteTexture(LatteTextureView* textureView, uint32 textureUnit) override;
 
 	void texture_copyImageSubData(LatteTexture* src, sint32 srcMip, sint32 effectiveSrcX, sint32 effectiveSrcY, sint32 srcSlice, LatteTexture* dst, sint32 dstMip, sint32 effectiveDstX, sint32 effectiveDstY, sint32 dstSlice, sint32 effectiveCopyWidth, sint32 effectiveCopyHeight, sint32 srcDepth) override;
+	bool texture_blitScaled(LatteTexture* src, sint32 srcMip, sint32 srcSlice, sint32 srcX, sint32 srcY, sint32 srcW, sint32 srcH, LatteTexture* dst, sint32 dstMip, sint32 dstSlice, sint32 dstX, sint32 dstY, sint32 dstW, sint32 dstH) override;
 	LatteTextureReadbackInfo* texture_createReadback(LatteTextureView* textureView) override;
 
 	// surface copy
